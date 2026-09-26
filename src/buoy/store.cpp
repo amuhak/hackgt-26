@@ -10,20 +10,6 @@ struct Meta {
   uint32_t first, next, acked;
 };
 
-String dirPath(uint32_t origin) {
-  char buf[16];
-  snprintf(buf, sizeof(buf), "/o/%08lx", (unsigned long)origin);
-  return buf;
-}
-
-String segPath(uint32_t origin, uint32_t seg) {
-  char buf[32];
-  snprintf(buf, sizeof(buf), "/o/%08lx/%lu.bin", (unsigned long)origin, (unsigned long)seg);
-  return buf;
-}
-
-String metaPath(uint32_t origin) { return dirPath(origin) + "/meta"; }
-
 // LittleFS.exists() logs a spurious error for missing files on Arduino 2.x.
 bool fileExists(const String& path) {
   struct stat st;
@@ -37,16 +23,32 @@ const char* baseName(const char* path) {
 
 }  // namespace
 
-bool Store::begin(uint32_t selfId) {
+String Store::dirPath(uint32_t origin) {
+  char buf[16];
+  snprintf(buf, sizeof(buf), "/%08lx", (unsigned long)origin);
+  return root_ + buf;
+}
+
+String Store::segPath(uint32_t origin, uint32_t seg) {
+  char buf[16];
+  snprintf(buf, sizeof(buf), "/%lu.bin", (unsigned long)seg);
+  return dirPath(origin) + buf;
+}
+
+String Store::metaPath(uint32_t origin) { return dirPath(origin) + "/meta"; }
+
+bool Store::begin(uint32_t selfId, const char* root) {
   self_ = selfId;
+  root_ = root;
+  count_ = 0;
   if (!LittleFS.begin(true)) {
     Serial.println("store: LittleFS mount failed");
     return false;
   }
-  if (!fileExists("/o")) LittleFS.mkdir("/o");
+  if (!fileExists(root_)) LittleFS.mkdir(root_);
 
-  File root = LittleFS.open("/o");
-  for (File d = root.openNextFile(); d; d = root.openNextFile()) {
+  File dir = LittleFS.open(root_);
+  for (File d = dir.openNextFile(); d; d = dir.openNextFile()) {
     if (!d.isDirectory()) continue;
     String path = d.path();
     uint32_t origin = strtoul(baseName(path.c_str()), nullptr, 16);
@@ -252,11 +254,10 @@ void Store::ingest(const Record* recs, size_t n, uint32_t senderFirst) {
   size_t i = 0;
   while (i < n && (recs[i].seq < s->next || recs[i].seq < s->acked)) i++;
   if (i == n) return;
-  if (recs[i].seq > s->next) {
-    // Gap. Only jump ahead if we hold nothing, or the sender can't fill it.
-    if (s->first != s->next && senderFirst <= s->next) return;
-    restartAt(*s, recs[i].seq);
-  }
+  // Records older than the sender's oldest are gone from it: skip to that.
+  if (senderFirst > s->next) restartAt(*s, senderFirst);
+  // Any other gap is a lost frame: wait for a resend from our advertised `next`.
+  if (recs[i].seq != s->next) return;
   write(*s, recs + i, n - i);
 }
 

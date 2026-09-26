@@ -17,6 +17,7 @@ Requires PlatformIO (`pip install platformio pyserial`).
 | `buoy` | each buoy | real sensors |
 | `buoy_sim` | spare ESP32s | fake readings, to test the mesh without wiring |
 | `collector` | the ESP32 on the laptop | bridges the mesh to USB serial |
+| `meshsim` | any one ESP32 | runs virtual buoys + collector over a lossy fake radio and prints PASS/FAIL. Wipes the board's flash. |
 
 ```
 pio run -e buoy -t upload --upload-port COM5
@@ -34,6 +35,7 @@ python tools/collector.py COM6 --db buoy.db
 
 - Every 30 s, each buoy stores a record in flash. A record holds water temperature, air temperature, pressure, GPS position and time, and wave statistics: vertical-accel RMS and peak, plus tilt, from 50 Hz IMU sampling.
 - Every ~5 s, each node broadcasts a summary of which records it holds per buoy over ESP-NOW. Neighbors send each other whatever is missing, so every buoy ends up with a copy of every buoy's data.
+- A receiver only accepts the next record in sequence. When it spots a gap, it immediately sends a NACK saying "resend from N".
 - The collector advertises what the laptop's DB already has, so buoys only send new records. Once the DB commits, the collector's ack spreads through the mesh and buoys delete the delivered data.
 
 Tunables (sample period, channel, long-range mode) and pins are in `include/proto.h`.

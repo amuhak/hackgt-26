@@ -232,7 +232,7 @@ void fill(Record& r) {
   r.air_cC = (24.0f + noise(1.0f)) * 100;
   r.pressure_pa = 101325 + (int32_t)noise(300);
   // Spread simulated buoys around a point off Tybee Island, GA.
-  uint32_t id = mesh::selfId();
+  uint32_t id = selfId();
   r.lat_e7 = 320000000 + (int32_t)(id % 1000) * 1000;
   r.lon_e7 = -807000000 - (int32_t)((id / 1000) % 1000) * 1000;
   r.sats = 8;

@@ -9,6 +9,7 @@
 #define SUMMARY_INTERVAL_MS  5000UL   // + up to 1 s jitter
 #define DATA_GAP_MS          15UL     // min spacing between DATA frames we send
 #define WANT_TIMEOUT_MS      15000UL  // stop serving a neighbor we stopped hearing from
+#define NACK_MIN_MS          100UL    // min spacing of gap NACKs we send
 #define MESH_CHANNEL         1
 #define MESH_LONG_RANGE      1        // ESP32-only LR PHY: ~2x range, all nodes must match
 #define MAX_ORIGINS          64
@@ -77,6 +78,7 @@ struct __attribute__((packed)) MsgHeader {
 #define SUMMARY_MAX_ENTRIES 14
 // Entries are sorted by origin. The page covers origin ids [lo, hi]: an origin
 // in that range that isn't listed is one the sender holds nothing for.
+// A one-entry page with lo == hi doubles as a NACK: "resend from my next".
 struct __attribute__((packed)) SummaryMsg {
   MsgHeader   h;
   uint32_t    lo;
@@ -85,8 +87,9 @@ struct __attribute__((packed)) SummaryMsg {
 };
 
 #define DATA_MAX_RECORDS 5
-// Consecutive records of one origin. `first` is the sender's lowest held seq,
-// so a receiver that needs something older knows this sender can't supply it.
+// Consecutive records of one origin. `first` is the oldest seq the sender will
+// ever send (held and not yet acked), so a receiver waiting on something older
+// knows this sender can't supply it.
 struct __attribute__((packed)) DataMsg {
   MsgHeader h;
   uint32_t  first;

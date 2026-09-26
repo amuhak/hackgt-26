@@ -6,6 +6,7 @@
 #include "store.h"
 
 static Store store;
+static Mesh* mesh;
 static uint32_t lastSampleAt = 0;
 static uint32_t lastStatusAt = 0;
 
@@ -21,19 +22,21 @@ static void logRecord(const Record& r) {
 void setup() {
   Serial.begin(115200);
   delay(200);
-  uint32_t id = mesh::selfId();
+  uint32_t id = selfId();
   Serial.printf("\nbuoy %08lx booting\n", (unsigned long)id);
 
   store.begin(id);
   sensors::begin();
-  if (!mesh::begin(&store, id)) Serial.println("mesh: DISABLED");
+  if (!espnow::begin()) Serial.println("mesh: DISABLED");
+  mesh = new Mesh(&store, id, espnow::radio());
   store.printStatus(Serial);
   lastSampleAt = millis();
 }
 
 void loop() {
   sensors::poll();
-  mesh::loop();
+  espnow::poll(*mesh);
+  mesh->loop(millis());
 
   uint32_t now = millis();
   if (now - lastSampleAt >= SAMPLE_PERIOD_MS) {
