@@ -2,6 +2,8 @@
 
 #include <Arduino.h>
 
+#include "dlog.h"
+
 Mesh::Mesh(MeshNode* node, uint32_t selfId, Radio* radio) : node_(node), self_(selfId), radio_(radio) {
   nextSummaryAt_ = random(1000);
 }
@@ -137,9 +139,13 @@ void Mesh::onData(const DataMsg& m, uint32_t now) {
     if (a->gapNext != s.next) {
       a->gapNext = s.next;
       a->gapSince = now;
+      DLOG("mesh: %08lx gap at %lu, oldest anyone offers is %lu; holding %lus before skipping\n",
+           (unsigned long)origin, (unsigned long)s.next, (unsigned long)floor, GAP_HOLD_MS / 1000);
     }
     holding = now - a->gapSince < GAP_HOLD_MS;
     if (holding) floor = 0;
+    else DLOG("mesh: %08lx skipping %lu..%lu (no neighbor has them)\n", (unsigned long)origin,
+              (unsigned long)s.next, (unsigned long)(floor - 1));
   }
   node_->ingest(m.r, m.h.count, floor);
 

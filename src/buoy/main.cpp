@@ -5,6 +5,12 @@
 #include "sensors.h"
 #include "store.h"
 
+#ifdef DEBUG_LOG
+#define STAT_EVERY_MS 10000UL
+#else
+#define STAT_EVERY_MS 60000UL
+#endif
+
 static Store store;
 static Mesh* mesh;
 static uint32_t lastSampleAt = 0;
@@ -92,11 +98,36 @@ static void logRecord(const Record& r) {
       r.lat_e7 / 1e7, r.lon_e7 / 1e7, r.sats, (unsigned long)r.gps_time, (unsigned long)sensors::gpsChars(), r.flags);
 }
 
+static const char* resetReason() {
+  switch (esp_reset_reason()) {
+    case ESP_RST_POWERON: return "power-on";
+    case ESP_RST_EXT: return "reset pin";
+    case ESP_RST_SW: return "software";
+    case ESP_RST_PANIC: return "CRASH (panic)";
+    case ESP_RST_INT_WDT: return "CRASH (interrupt watchdog)";
+    case ESP_RST_TASK_WDT: return "CRASH (task watchdog)";
+    case ESP_RST_WDT: return "CRASH (watchdog)";
+    case ESP_RST_BROWNOUT: return "BROWNOUT (supply voltage sagged)";
+    case ESP_RST_DEEPSLEEP: return "deep sleep wake";
+    default: return "unknown";
+  }
+}
+
 void setup() {
+#ifdef DEBUG_LOG
+  Serial.setTxBufferSize(16384);  // bursts of frame logs shouldn't stall the loop
+#endif
   Serial.begin(115200);
   delay(200);
   uint32_t id = selfId();
-  Serial.printf("\nbuoy %08lx booting\n", (unsigned long)id);
+  Serial.printf("\nbuoy %08lx booting (reset reason: %s)\n", (unsigned long)id, resetReason());
+#ifdef DEBUG_LOG
+  Serial.printf("debug build: chip rev %d, %lu MHz, flash %lu KB, heap %u, sdk %s\n", ESP.getChipRevision(),
+                (unsigned long)ESP.getCpuFreqMHz(), (unsigned long)(ESP.getFlashChipSize() / 1024),
+                ESP.getFreeHeap(), ESP.getSdkVersion());
+  Serial.printf("pins: I2C SDA=%d SCL=%d, 1-Wire=%d, GPS RX=%d TX=%d\n", PIN_I2C_SDA, PIN_I2C_SCL, PIN_ONEWIRE,
+                PIN_GPS_RX, PIN_GPS_TX);
+#endif
 
   store.begin(id);
   sensors::begin();
@@ -127,8 +158,17 @@ void loop() {
     if (store.appendOwn(&r)) logRecord(r);
     else Serial.println("store: append FAILED");
   }
-  if (now - lastStatusAt >= 60000) {
+  if (now - lastStatusAt >= STAT_EVERY_MS) {
     lastStatusAt = now;
     printStat();
   }
+#ifdef DEBUG_LOG
+  static uint32_t lastTickAt = 0;
+  if (now - lastTickAt >= 1000) {
+    lastTickAt = now;
+    sensors::debugTick();
+  }
+  uint32_t took = millis() - loopNow;
+  if (took > 100) Serial.printf("dbg slow loop: %lu ms\n", (unsigned long)took);
+#endif
 }

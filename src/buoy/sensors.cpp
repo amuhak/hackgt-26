@@ -75,6 +75,25 @@ DallasTemperature ds(&oneWire);
 TinyGPSPlus gps;
 HardwareSerial gpsSerial(2);
 bool bmpOk = false, mpuOk = false;
+int gpsRxPin = PIN_GPS_RX;
+uint32_t mpuErrors = 0;
+
+#ifdef DEBUG_LOG
+// Echoes raw GPS bytes a line at a time; unprintable bytes (wrong baud,
+// noise) show as '?'.
+char gpsLine[100];
+size_t gpsLen = 0;
+
+void echoGps(char c) {
+  if (c == '\r') return;
+  if (c != '\n') gpsLine[gpsLen++] = isprint((unsigned char)c) ? c : '?';
+  if (c == '\n' || gpsLen == sizeof(gpsLine) - 1) {
+    gpsLine[gpsLen] = 0;
+    Serial.printf("gps< %s\n", gpsLine);
+    gpsLen = 0;
+  }
+}
+#endif
 
 // Days since 1970-01-01 for a proleptic Gregorian date.
 int32_t daysFromCivil(int32_t y, uint32_t m, uint32_t d) {
@@ -159,6 +178,7 @@ void gpsBegin() {
       if (gpsListen(pins[p][0], pins[p][1], baud) >= 2) {
         Serial.printf("gps: NMEA on RX=GPIO%d at %lu baud%s\n", pins[p][0], (unsigned long)baud,
                       p ? " (TX/RX wires are swapped; working anyway)" : "");
+        gpsRxPin = pins[p][0];
         return;
       }
     }
@@ -208,7 +228,13 @@ void begin() {
 
 void poll() {
 #ifndef SIM_SENSORS
-  while (gpsSerial.available()) gps.encode(gpsSerial.read());
+  while (gpsSerial.available()) {
+    char c = gpsSerial.read();
+    gps.encode(c);
+#ifdef DEBUG_LOG
+    echoGps(c);
+#endif
+  }
 #endif
   uint32_t now = millis();
   if (now - lastImuAt < IMU_SAMPLE_MS) return;
@@ -220,6 +246,7 @@ void poll() {
   if (!mpuOk) return;
   float ax, ay, az;
   if (mpuAccel(ax, ay, az)) waves.add(ax, ay, az);
+  else mpuErrors++;
 #endif
 }
 
@@ -274,5 +301,47 @@ uint32_t gpsChars() {
   return gps.charsProcessed();
 #endif
 }
+
+#ifdef DEBUG_LOG
+void debugTick() {
+#ifdef SIM_SENSORS
+  Serial.println("dbg sensors: simulated");
+#else
+  static uint32_t ticks = 0, lastChars = 0;
+  if (++ticks % 10 == 0) i2cScan();  // catches loose I2C wires
+
+  // rxpin: line level right now; a GPS TX idles high (1), 0 = nothing driving it.
+  uint32_t chars = gps.charsProcessed();
+  Serial.printf("dbg gps: +%lu bytes (total %lu), sentences ok %lu bad-checksum %lu, fix %s sats %lu hdop %.1f, "
+                "rxpin GPIO%d=%d\n",
+                (unsigned long)(chars - lastChars), (unsigned long)chars, (unsigned long)gps.passedChecksum(),
+                (unsigned long)gps.failedChecksum(), gps.location.isValid() ? "yes" : "no",
+                (unsigned long)gps.satellites.value(), gps.hdop.hdop(), gpsRxPin, digitalRead(gpsRxPin));
+  lastChars = chars;
+  // Polls the GPS (it answers with a $PUBX,00 line), so its RX wire toggles
+  // once a second: something to trigger the scope on.
+  gpsSerial.print("$PUBX,00*33\r\n");
+
+  if (bmpOk) {
+    Serial.printf("dbg bmp280: %.2f C, %.2f hPa\n", bmp.readTemperature(), bmp.readPressure() / 100.0f);
+  } else {
+    Serial.println("dbg bmp280: MISSING");
+  }
+  float ax, ay, az;
+  if (mpuOk && mpuAccel(ax, ay, az)) {
+    Serial.printf("dbg mpu: accel %.2f %.2f %.2f m/s2 |a| %.2f g, read errors %lu\n", ax, ay, az,
+                  sqrtf(ax * ax + ay * ay + az * az) / kG, (unsigned long)mpuErrors);
+  } else {
+    Serial.printf("dbg mpu: %s, read errors %lu\n", mpuOk ? "READ FAILED" : "MISSING", (unsigned long)mpuErrors);
+  }
+  float water = ds.getTempCByIndex(0);
+  ds.requestTemperatures();
+  Serial.printf("dbg ds18b20: %d on bus, %.2f C%s\n", ds.getDeviceCount(), water,
+                water == DEVICE_DISCONNECTED_C ? " (disconnected: check DQ wire / 4.7k pull-up)"
+                : water == 85.0f               ? " (85 = power-on value, not a reading)"
+                                               : "");
+#endif
+}
+#endif
 
 }  // namespace sensors

@@ -4,6 +4,8 @@
 #include <LittleFS.h>
 #include <sys/stat.h>
 
+#include "../common/dlog.h"
+
 namespace {
 
 struct Meta {
@@ -173,6 +175,8 @@ void Store::deleteSegments(const OriginState& s, uint32_t fromSeg, uint32_t toSe
 
 // Drops everything held for this origin and continues from `seq`.
 void Store::restartAt(OriginState& s, uint32_t seq) {
+  DLOG("store: %08lx restarts at %lu, dropping [%lu,%lu)\n", (unsigned long)s.origin, (unsigned long)seq,
+       (unsigned long)s.first, (unsigned long)s.next);
   if (s.first < s.next) {
     deleteSegments(s, s.first / SEGMENT_RECORDS, (s.next - 1) / SEGMENT_RECORDS + 1);
   }
@@ -193,7 +197,11 @@ void Store::prune(OriginState& s) {
     s.first = (seg + 1) * SEGMENT_RECORDS;
     changed = true;
   }
-  if (changed) saveMeta(s);
+  if (changed) {
+    saveMeta(s);
+    DLOG("store: %08lx pruned below %lu (laptop acked %lu)\n", (unsigned long)s.origin, (unsigned long)s.first,
+         (unsigned long)s.acked);
+  }
 }
 
 // When flash is nearly full, evict the oldest segment of the origin holding
