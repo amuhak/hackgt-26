@@ -56,9 +56,14 @@ class SimRadio : public Radio {
 Store stores[kBuoys];
 std::map<uint32_t, std::set<uint32_t>> got;  // what the "laptop" received
 std::map<uint32_t, uint32_t> emitted;        // emit count, to detect duplicates
+std::map<uint32_t, uint32_t> maxLatencyS;    // sampled -> reached the laptop, for records since latencyFrom
+uint32_t latencyFrom = UINT32_MAX;
 CollectorSink sink([](const Record& r) {
   got[r.origin].insert(r.seq);
   emitted[r.origin]++;
+  if (r.uptime_s >= latencyFrom) {
+    maxLatencyS[r.origin] = max(maxLatencyS[r.origin], simNow / 1000 - r.uptime_s);
+  }
 });
 SimRadio radios[kNodes];
 Mesh* meshes[kNodes];
@@ -76,6 +81,8 @@ void check(bool ok, const char* fmt, ...) {
 }
 
 void connect(int a, int b, bool on) { link[a][b] = link[b][a] = on; }
+void disconnectAll() { memset(link, 0, sizeof(link)); }
+void connectOneWay(int from, int to) { link[from][to] = true; }
 
 void deliver() {
   for (size_t i = 0; i < air.size();) {
@@ -304,6 +311,50 @@ void setup() {
   run(60000);
   printAll();
   checkCollected();
+
+  // Multi-hop while the origins are live: A's records have to cross B, C and
+  // D, and the laptop's acks have to travel back the same way.
+  Serial.println("phase 7: live chain A-B-C-D-collector, only D hears the collector, all four sample");
+  disconnectAll();
+  for (int i = 0; i < kNodes; i++) alive[i] = true;
+  connect(0, 1, true);
+  connect(1, 2, true);
+  connect(2, 3, true);
+  connect(3, kCol, true);
+  latencyFrom = simNow / 1000;
+  generating = true;
+  run(120000);
+  generating = false;
+  run(90000);
+  printAll();
+  checkCollected();
+  checkPruned();
+  for (int o = 0; o < kBuoys; o++) {
+    Serial.printf("latency %s -> laptop over %d hops: max %lus\n", kNames[o], kBuoys - o,
+                  (unsigned long)maxLatencyS[kIds[o]]);
+  }
+  check(maxLatencyS[kIds[0]] > 0 && maxLatencyS[kIds[0]] <= 90, "A's live records crossed 4 hops within 90 s (max %lus)",
+        (unsigned long)maxLatencyS[kIds[0]]);
+
+  // A hears the collector and serves it directly, but those frames never
+  // arrive; B overhears them and must not assume the collector got them.
+  Serial.println("phase 8: one-way link, A hears the collector but not vice versa; B relays");
+  disconnectAll();
+  alive[2] = alive[3] = false;
+  connect(0, 1, true);
+  connect(1, kCol, true);
+  connectOneWay(kCol, 0);
+  latencyFrom = simNow / 1000;
+  maxLatencyS.clear();
+  generating = true;
+  run(120000);
+  generating = false;
+  run(90000);
+  printAll();
+  checkCollected();
+  Serial.printf("latency A -> laptop via B: max %lus\n", (unsigned long)maxLatencyS[kIds[0]]);
+  check(maxLatencyS[kIds[0]] > 0 && maxLatencyS[kIds[0]] <= 90, "A's records got through B within 90 s (max %lus)",
+        (unsigned long)maxLatencyS[kIds[0]]);
   LittleFS.format();  // don't leave test data behind for the buoy firmware
 
   Serial.printf("SIM DONE pass=%d fail=%d (virtual %lus in %lus real)\n", passes, fails,
