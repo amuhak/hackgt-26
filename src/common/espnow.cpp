@@ -20,6 +20,7 @@ const uint8_t kBroadcast[6] = {0xff, 0xff, 0xff, 0xff, 0xff, 0xff};
 QueueHandle_t rxQueue;
 volatile bool txBusy = false;
 uint32_t txStartedAt = 0;
+Stats counters = {};
 
 #if ESP_ARDUINO_VERSION_MAJOR >= 3
 void onRecv(const esp_now_recv_info_t*, const uint8_t* data, int len) {
@@ -31,14 +32,18 @@ void onRecv(const uint8_t*, const uint8_t* data, int len) {
   Packet p;
   p.len = len;
   memcpy(p.data, data, len);
-  xQueueSend(rxQueue, &p, 0);
+  if (xQueueSend(rxQueue, &p, 0) == pdTRUE) counters.rxFrames++;
+  else counters.rxDropped++;
 }
 
 #if ESP_IDF_VERSION >= ESP_IDF_VERSION_VAL(5, 5, 0)
-void onSent(const wifi_tx_info_t*, esp_now_send_status_t) { txBusy = false; }
+void onSent(const wifi_tx_info_t*, esp_now_send_status_t st) {
 #else
-void onSent(const uint8_t*, esp_now_send_status_t) { txBusy = false; }
+void onSent(const uint8_t*, esp_now_send_status_t st) {
 #endif
+  if (st != ESP_NOW_SEND_SUCCESS) counters.txFailed++;
+  txBusy = false;
+}
 
 class EspNowRadio : public Radio {
  public:
@@ -53,8 +58,10 @@ class EspNowRadio : public Radio {
     txStartedAt = millis();
     if (esp_now_send(kBroadcast, static_cast<const uint8_t*>(buf), len) != ESP_OK) {
       txBusy = false;
+      counters.txFailed++;
       return false;
     }
+    counters.txFrames++;
     return true;
   }
 };
@@ -97,6 +104,8 @@ bool begin() {
 }
 
 Radio* radio() { return &theRadio; }
+
+const Stats& stats() { return counters; }
 
 void poll(Mesh& mesh) {
   Packet p;

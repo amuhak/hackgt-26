@@ -15,13 +15,13 @@ Requires PlatformIO (`pip install platformio pyserial`).
 | Env | Flash to | Purpose |
 |---|---|---|
 | `buoy` | each buoy | real sensors |
-| `buoy_sim` | spare ESP32s | fake readings, to test the mesh without wiring |
+| `buoy_sim` | spare ESP32s | fake readings, to test the mesh without wiring. `BACKFILL <n>` over serial queues n extra records, for load tests. |
 | `collector` | the ESP32 on the laptop | bridges the mesh to USB serial |
 | `meshsim` | any one ESP32 | runs virtual buoys + collector over a lossy fake radio and prints PASS/FAIL. Wipes the board's flash. |
 
 ```
 pio run -e buoy -t upload --upload-port COM5
-pio device monitor -p COM5            # boot log, I2C scan, one sample every 30 s
+pio device monitor -p COM5            # boot log, I2C scan, one sample every 30 s; type STAT for counters
 ```
 
 Collect data into SQLite (`readings` table, one row per buoy sample):

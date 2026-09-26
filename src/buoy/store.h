@@ -9,8 +9,8 @@ class Store : public MeshNode {
  public:
   // `root` lets several stores share one filesystem (mesh simulation).
   bool begin(uint32_t selfId, const char* root = "/o");
-  // Assigns origin/seq to one of our own readings and stores it.
-  bool appendOwn(Record& r);
+  // Assigns origin/seq to our own readings and stores them.
+  bool appendOwn(Record* r, size_t n = 1);
   void printStatus(Print& out);
 
   size_t states(OriginState* out, size_t max) override;

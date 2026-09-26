@@ -49,7 +49,7 @@ void Mesh::sendNack(uint32_t origin) {
   fillHeader(m.h, MSG_SUMMARY, 1);
   m.lo = m.hi = origin;
   if (!node_->state(origin, m.e[0])) return;
-  radio_->send(&m, offsetof(SummaryMsg, e) + sizeof(OriginState));
+  if (radio_->send(&m, offsetof(SummaryMsg, e) + sizeof(OriginState))) counters.nacksSent++;
 }
 
 void Mesh::onSummary(const SummaryMsg& m, uint32_t now) {
@@ -85,6 +85,7 @@ void Mesh::onData(const DataMsg& m, uint32_t now) {
   for (size_t i = 1; i < m.h.count; i++) {
     if (m.r[i].origin != origin || m.r[i].seq != seq + i) return;  // malformed
   }
+  counters.dataHeard++;
   node_->ingest(m.r, m.h.count, m.first);
 
   // Still behind this frame means we missed one before it: ask for a resend.
@@ -132,7 +133,9 @@ void Mesh::serveData(uint32_t now) {
     }
     uint32_t from = max(w.from, max(s.first, s.acked));
     DataMsg m;
+    uint32_t t0 = micros();
     size_t n = from < s.next ? node_->read(w.origin, from, m.r, DATA_MAX_RECORDS) : 0;
+    counters.readUsMax = max(counters.readUsMax, (uint32_t)(micros() - t0));
     if (n == 0) {
       w.active = false;
       continue;
@@ -140,6 +143,7 @@ void Mesh::serveData(uint32_t now) {
     fillHeader(m.h, MSG_DATA, n);
     m.first = max(s.first, s.acked);  // oldest we'll ever send
     if (radio_->send(&m, offsetof(DataMsg, r) + n * sizeof(Record))) {
+      counters.dataSent++;
       w.from = from + n;
       lastDataAt_ = now;
       wantCursor_ = idx + 1;  // round-robin across origins

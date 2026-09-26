@@ -206,12 +206,14 @@ bool Store::write(OriginState& s, const Record* r, size_t n) {
   return true;
 }
 
-bool Store::appendOwn(Record& r) {
+bool Store::appendOwn(Record* r, size_t n) {
   OriginState* s = find(self_);
   if (!s) return false;
-  r.origin = self_;
-  r.seq = s->next;
-  return write(*s, &r, 1);
+  for (size_t i = 0; i < n; i++) {
+    r[i].origin = self_;
+    r[i].seq = s->next + i;
+  }
+  return write(*s, r, n);
 }
 
 size_t Store::states(OriginState* out, size_t max) {

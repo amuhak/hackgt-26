@@ -71,7 +71,48 @@ def start_session(ser: serial.Serial, db: sqlite3.Connection) -> None:
     for origin, nxt in rows:
         send(ser, f"HAVE {origin} {nxt}")
     send(ser, "START")
-    print(f"collector ready; DB has {len(rows)} buoys")
+    log(f"collector ready; DB has {len(rows)} buoys")
+
+
+def log(msg: str) -> None:
+    print(f"{time.strftime('%H:%M:%S')} {msg}", flush=True)
+
+
+def run_session(ser: serial.Serial, db: sqlite3.Connection) -> None:
+    """Drains one serial connection until it errors out."""
+    # Opening the port usually resets the ESP32, which then says READY. If it
+    # didn't reset, it's already running, so announce ourselves right away too.
+    time.sleep(1.5)
+    start_session(ser, db)
+    started = time.monotonic()
+    pending: dict[str, int] = {}  # origin -> next seq to ack after commit
+    new_rows = 0
+    last_flush = time.monotonic()
+    while True:
+        line = ser.readline().decode(errors="replace").strip()
+        if line.startswith("READY") and time.monotonic() - started > 3:
+            start_session(ser, db)  # collector rebooted
+            started = time.monotonic()
+        elif line.startswith("REC "):
+            try:
+                row = decode(bytes.fromhex(line[4:]), int(time.time()))
+            except (ValueError, struct.error):
+                continue  # garbled line
+            cur = db.execute(f"INSERT OR IGNORE INTO readings VALUES ({','.join('?' * len(row))})", row)
+            new_rows += cur.rowcount
+            pending[row[0]] = max(pending.get(row[0], 0), row[1] + 1)
+        elif line.startswith("LOG "):
+            log("collector: " + line[4:])
+
+        if pending and time.monotonic() - last_flush > 0.5:
+            db.commit()
+            for origin, nxt in pending.items():
+                send(ser, f"ACK {origin} {nxt}")
+            counts = ", ".join(f"{o} up to #{n - 1}" for o, n in sorted(pending.items()))
+            log(f"+{new_rows} new ({counts})")
+            pending.clear()
+            new_rows = 0
+            last_flush = time.monotonic()
 
 
 def main() -> None:
@@ -83,44 +124,21 @@ def main() -> None:
 
     db = sqlite3.connect(args.db)
     db.execute(SCHEMA)
-    ser = serial.Serial(args.port, args.baud, timeout=0.2)  # opening resets the ESP32
-    print(f"waiting for collector on {args.port}...")
-
-    pending: dict[str, int] = {}  # origin -> next seq to ack after commit
-    new_rows = 0
-    last_flush = time.monotonic()
+    log(f"waiting for collector on {args.port}...")
     try:
-        while True:
-            line = ser.readline().decode(errors="replace").strip()
-            if line.startswith("READY"):
-                start_session(ser, db)  # also covers a collector reboot mid-session
-            elif line.startswith("REC "):
-                try:
-                    raw = bytes.fromhex(line[4:])
-                    row = decode(raw, int(time.time()))
-                except (ValueError, struct.error):
-                    continue  # garbled line
-                cur = db.execute(f"INSERT OR IGNORE INTO readings VALUES ({','.join('?' * len(row))})", row)
-                new_rows += cur.rowcount
-                pending[row[0]] = max(pending.get(row[0], 0), row[1] + 1)
-            elif line.startswith("LOG "):
-                print("collector:", line[4:])
-
-            if pending and time.monotonic() - last_flush > 0.5:
+        while True:  # survive unplug/replug of the collector
+            try:
+                with serial.Serial(args.port, args.baud, timeout=0.2) as ser:
+                    run_session(ser, db)
+            except serial.SerialException as e:
                 db.commit()
-                for origin, nxt in pending.items():
-                    send(ser, f"ACK {origin} {nxt}")
-                counts = ", ".join(f"{o} up to #{n - 1}" for o, n in sorted(pending.items()))
-                print(f"{time.strftime('%H:%M:%S')} +{new_rows} new ({counts})")
-                pending.clear()
-                new_rows = 0
-                last_flush = time.monotonic()
+                log(f"serial error ({e}); retrying")
+                time.sleep(2)
     except KeyboardInterrupt:
         pass
     finally:
         db.commit()
         db.close()
-        ser.close()
 
 
 if __name__ == "__main__":

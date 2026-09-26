@@ -36,6 +36,12 @@ class Mesh {
   void receive(const uint8_t* data, size_t len, uint32_t now);
   void loop(uint32_t now);  // call often
 
+  // Diagnostics for soak tests.
+  struct Counters {
+    uint32_t dataSent, nacksSent, dataHeard, readUsMax;
+  };
+  Counters counters = {};
+
  private:
   // A neighbor is missing records of `origin` from `from` onward; we serve
   // them in DATA bursts until caught up or the neighbor goes quiet.
@@ -71,7 +77,14 @@ class Mesh {
 // The ESP-NOW radio. Received frames are queued from the Wi-Fi task and
 // handed to the mesh by poll() on the main loop.
 namespace espnow {
+struct Stats {
+  uint32_t rxFrames;   // handed to the mesh
+  uint32_t rxDropped;  // main loop too slow, queue full
+  uint32_t txFrames;
+  uint32_t txFailed;
+};
 bool begin();
+const Stats& stats();
 Radio* radio();
 void poll(Mesh& mesh);
 }  // namespace espnow

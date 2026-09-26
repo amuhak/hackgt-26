@@ -25,6 +25,7 @@ static uint32_t id;
 static char line[64];
 static size_t lineLen = 0;
 static uint32_t lastReadyAt = 0;
+static uint32_t lastStatAt = 0;
 
 static void handleLine(char* s) {
   char cmd[8];
@@ -69,4 +70,13 @@ void loop() {
   }
   espnow::poll(*mesh);
   mesh->loop(millis());
+
+  if (millis() - lastStatAt >= 60000) {
+    lastStatAt = millis();
+    const espnow::Stats& rs = espnow::stats();
+    Serial.printf("LOG STAT up=%lu heap=%u minheap=%u rx=%lu rxdrop=%lu tx=%lu txfail=%lu nack=%lu heard=%lu\n",
+                  millis() / 1000, ESP.getFreeHeap(), ESP.getMinFreeHeap(), (unsigned long)rs.rxFrames,
+                  (unsigned long)rs.rxDropped, (unsigned long)rs.txFrames, (unsigned long)rs.txFailed,
+                  (unsigned long)mesh->counters.nacksSent, (unsigned long)mesh->counters.dataHeard);
+  }
 }
