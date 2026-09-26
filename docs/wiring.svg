@@ -68,7 +68,7 @@
   <rect x="560" y="242" width="300" height="118" rx="8" class="box"/>
   <text x="700" y="268" class="title">MPU6050</text>
   <text x="700" y="286" class="sub">accelerometer / gyro</text>
-  <text x="700" y="302" class="sub">I2C addr 0x68, INT unused</text>
+  <text x="700" y="302" class="sub">I2C addr 0x68; INT, XDA, XCL unused</text>
   <text x="568" y="264" class="pin">VCC</text>
   <text x="568" y="284" class="pin">GND</text>
   <text x="568" y="304" class="pin">SCL</text>

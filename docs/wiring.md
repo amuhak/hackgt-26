@@ -21,8 +21,8 @@ The same wiring is drawn in [wiring.svg](wiring.svg). The ESP32 pin names below 
  SCL -> GPIO22           SCL -> GPIO22            yellow DQ  -> GPIO4       TX  -> GPIO16
  SDA -> GPIO21           SDA -> GPIO21                                      RX  -> GPIO17
  SDO -> GND   (0x76)     AD0 -> GND   (0x68)      4.7 kΩ pull-up:
- CSB -> 3V3   (if pin    INT    not connected       3V3 ---[4.7k]---+
-               exists)                                              |
+ CSB -> 3V3   (if pin    INT, XDA, XCL:             3V3 ---[4.7k]---+
+               exists)      not connected                           |
                                                     GPIO4 ----------+---- DQ (yellow)
 ```
 
@@ -34,7 +34,8 @@ The same wiring is drawn in [wiring.svg](wiring.svg). The ESP32 pin names below 
 | BMP280 CSB | 3V3 | only if the pin is broken out; forces I2C mode |
 | MPU6050 VCC / GND | 3V3 / GND | |
 | MPU6050 SCL / SDA | GPIO22 / GPIO21 | shared I2C bus |
-| MPU6050 AD0 | GND | sets I2C addr 0x68; INT unused |
+| MPU6050 AD0 | GND | sets I2C addr 0x68 |
+| MPU6050 INT, XDA, XCL | — | leave unconnected (XDA/XCL is an aux bus for extra sensors) |
 | DS18B20 VDD (red) / GND (black) | 3V3 / GND | |
 | DS18B20 DQ (yellow) | GPIO4 | **4.7 kΩ resistor from DQ to 3V3** |
 | NEO-6M VCC / GND | VIN (5V) / GND | module has its own regulator; TX output is 3.3V-safe |
