@@ -7,4 +7,6 @@ void begin();
 void poll();
 // Fills the sensor fields of `r` and resets the per-period wave statistics.
 void fill(Record& r);
+// Bytes received from the GPS so far; 0 means it's miswired or unpowered.
+uint32_t gpsChars();
 }  // namespace sensors

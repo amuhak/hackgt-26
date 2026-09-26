@@ -7,7 +7,6 @@
 
 #ifndef SIM_SENSORS
 #include <Adafruit_BMP280.h>
-#include <Adafruit_MPU6050.h>
 #include <DallasTemperature.h>
 #include <OneWire.h>
 #include <TinyGPSPlus.h>
@@ -71,7 +70,6 @@ float noise(float amp) { return amp * ((int32_t)(esp_random() % 2001) - 1000) / 
 #else
 
 Adafruit_BMP280 bmp;
-Adafruit_MPU6050 mpu;
 OneWire oneWire(PIN_ONEWIRE);
 DallasTemperature ds(&oneWire);
 TinyGPSPlus gps;
@@ -86,6 +84,88 @@ int32_t daysFromCivil(int32_t y, uint32_t m, uint32_t d) {
   uint32_t doy = (153 * (m + (m > 2 ? -3 : 9)) + 2) / 5 + d - 1;
   uint32_t doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
   return era * 146097 + (int32_t)doe - 719468;
+}
+
+// Register-level MPU driver. Many boards sold as MPU6050 carry an MPU6500 or
+// similar, which shares these registers but fails the Adafruit chip-id check.
+uint8_t mpuAddr = 0;
+
+bool mpuWrite(uint8_t reg, uint8_t val) {
+  Wire.beginTransmission(mpuAddr);
+  Wire.write(reg);
+  Wire.write(val);
+  return Wire.endTransmission() == 0;
+}
+
+bool mpuRead(uint8_t reg, uint8_t* buf, size_t n) {
+  Wire.beginTransmission(mpuAddr);
+  Wire.write(reg);
+  if (Wire.endTransmission(false) != 0) return false;
+  if (Wire.requestFrom((int)mpuAddr, (int)n) != (int)n) return false;
+  for (size_t i = 0; i < n; i++) buf[i] = Wire.read();
+  return true;
+}
+
+bool mpuBegin() {
+  for (uint8_t addr : {0x68, 0x69}) {
+    mpuAddr = addr;
+    uint8_t id;
+    if (!mpuRead(0x75, &id, 1)) continue;  // WHO_AM_I
+    Serial.printf("mpu: WHO_AM_I 0x%02x at 0x%02x\n", id, addr);
+    mpuWrite(0x6B, 0x80);  // reset
+    delay(100);
+    mpuWrite(0x6B, 0x01);  // wake, gyro PLL clock
+    mpuWrite(0x1A, 0x04);  // DLPF ~20 Hz
+    mpuWrite(0x1C, 0x08);  // accel +-4 g
+    if (id != 0x68) mpuWrite(0x1D, 0x04);  // MPU6500+: separate accel DLPF
+    delay(50);
+    return true;
+  }
+  return false;
+}
+
+bool mpuAccel(float& x, float& y, float& z) {
+  uint8_t b[6];
+  if (!mpuRead(0x3B, b, sizeof(b))) return false;
+  constexpr float kScale = kG / 8192.0f;  // LSB/g at +-4 g
+  x = (int16_t)(b[0] << 8 | b[1]) * kScale;
+  y = (int16_t)(b[2] << 8 | b[3]) * kScale;
+  z = (int16_t)(b[4] << 8 | b[5]) * kScale;
+  return true;
+}
+
+// Counts NMEA sentence starts heard on the given pins/baud.
+int gpsListen(int rx, int tx, uint32_t baud) {
+  gpsSerial.end();
+  gpsSerial.begin(baud, SERIAL_8N1, rx, tx);
+  int sentences = 0;
+  for (uint32_t t = millis(); millis() - t < 1500;) {
+    if (gpsSerial.available()) {
+      if (gpsSerial.read() == '$') sentences++;
+    } else {
+      delay(1);
+    }
+  }
+  return sentences;
+}
+
+// A NEO-6M streams NMEA constantly, even without a fix, so silence means a
+// wiring problem. Tries swapped TX/RX and other bauds before giving up.
+void gpsBegin() {
+  const int pins[2][2] = {{PIN_GPS_RX, PIN_GPS_TX}, {PIN_GPS_TX, PIN_GPS_RX}};
+  const uint32_t bauds[] = {9600, 38400, 115200};
+  for (int p = 0; p < 2; p++) {
+    for (uint32_t baud : bauds) {
+      if (gpsListen(pins[p][0], pins[p][1], baud) >= 2) {
+        Serial.printf("gps: NMEA on RX=GPIO%d at %lu baud%s\n", pins[p][0], (unsigned long)baud,
+                      p ? " (TX/RX wires are swapped; working anyway)" : "");
+        return;
+      }
+    }
+  }
+  Serial.printf("gps: NO DATA on GPIO%d or GPIO%d; check GPS VCC/GND and the TX wire\n", PIN_GPS_RX, PIN_GPS_TX);
+  gpsSerial.end();
+  gpsSerial.begin(9600, SERIAL_8N1, PIN_GPS_RX, PIN_GPS_TX);
 }
 
 void i2cScan() {
@@ -114,18 +194,13 @@ void begin() {
                     Adafruit_BMP280::FILTER_X16, Adafruit_BMP280::STANDBY_MS_500);
   }
 
-  mpuOk = mpu.begin(0x68, &Wire) || mpu.begin(0x69, &Wire);
-  if (mpuOk) {
-    mpu.setAccelerometerRange(MPU6050_RANGE_4_G);
-    mpu.setGyroRange(MPU6050_RANGE_250_DEG);
-    mpu.setFilterBandwidth(MPU6050_BAND_21_HZ);
-  }
+  mpuOk = mpuBegin();
 
   ds.begin();
   ds.setWaitForConversion(false);
   ds.requestTemperatures();
 
-  gpsSerial.begin(9600, SERIAL_8N1, PIN_GPS_RX, PIN_GPS_TX);
+  gpsBegin();
   Serial.printf("sensors: bmp280 %s, mpu6050 %s, ds18b20 %d found\n", bmpOk ? "ok" : "MISSING",
                 mpuOk ? "ok" : "MISSING", ds.getDeviceCount());
 #endif
@@ -143,9 +218,8 @@ void poll() {
   waves.add(noise(0.3f), noise(0.3f), kG + 1.5f * sinf(t * 2 * PI / 6.0f) + noise(0.2f));
 #else
   if (!mpuOk) return;
-  sensors_event_t a, g, temp;
-  mpu.getEvent(&a, &g, &temp);
-  waves.add(a.acceleration.x, a.acceleration.y, a.acceleration.z);
+  float ax, ay, az;
+  if (mpuAccel(ax, ay, az)) waves.add(ax, ay, az);
 #endif
 }
 
@@ -190,6 +264,14 @@ void fill(Record& r) {
     r.flags |= F_GPS_TIME;
   }
   r.sats = gps.satellites.isValid() ? min<uint32_t>(gps.satellites.value(), 255) : 0;
+#endif
+}
+
+uint32_t gpsChars() {
+#ifdef SIM_SENSORS
+  return 0;
+#else
+  return gps.charsProcessed();
 #endif
 }
 
