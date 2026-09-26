@@ -72,7 +72,7 @@ def send(ser: serial.Serial, line: str) -> None:
     ser.write((line + "\n").encode())
 
 
-REWIND_QUIET_S = 2  # lines already in flight after a REWIND still show the gap
+REWIND_TIMEOUT_S = 5  # resend REWIND if the collector never confirms it
 
 
 def start_session(ser: serial.Serial, db: sqlite3.Connection) -> dict:
@@ -110,34 +110,36 @@ def run_session(ser: serial.Serial, db: sqlite3.Connection) -> None:
     started = time.monotonic()
     pending = set()  # origins to ack after commit
     jump_ok = {}  # origin -> gap start we already rewound for
-    last_rewind = 0.0
+    rewind_sent = None  # REWIND awaiting the collector's confirmation
     new_rows = 0
     last_flush = time.monotonic()
 
     def rewind(why: str) -> None:
-        nonlocal last_rewind
+        nonlocal rewind_sent
         send(ser, "REWIND")
-        last_rewind = time.monotonic()
+        rewind_sent = time.monotonic()
         log(f"rewind: {why}")
 
     while True:
         line = ser.readline().decode(errors="replace").strip()
-        quiet = time.monotonic() - last_rewind > REWIND_QUIET_S
+        if rewind_sent and time.monotonic() - rewind_sent > REWIND_TIMEOUT_S:
+            rewind("no confirmation")
         if line.startswith("READY") and time.monotonic() - started > 3:
             expect = start_session(ser, db)  # collector rebooted
             started = time.monotonic()
+        elif line.startswith("LOG rewound"):
+            rewind_sent = None  # REC lines from here on follow the rewind
         elif line.startswith("REC "):
+            if rewind_sent:
+                continue  # sent before the collector rewound
             raw = parse_rec(line)
             if raw is None:
-                if quiet:
-                    rewind("corrupt line")
+                rewind("corrupt line")
                 continue
             row = decode(raw, int(time.time()))
             origin, seq = row[0], row[1]
             e = expect.get(origin, 0)
             if seq > e:
-                if not quiet:
-                    continue  # in flight from before the rewind
                 if jump_ok.get(origin) != e:
                     jump_ok[origin] = e
                     rewind(f"{origin} jumped {e} -> {seq}")
