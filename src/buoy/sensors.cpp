@@ -147,9 +147,23 @@ bool mpuAccel(float& x, float& y, float& z) {
   uint8_t b[6];
   if (!mpuRead(0x3B, b, sizeof(b))) return false;
   constexpr float kScale = kG / 8192.0f;  // LSB/g at +-4 g
-  x = (int16_t)(b[0] << 8 | b[1]) * kScale;
-  y = (int16_t)(b[2] << 8 | b[3]) * kScale;
-  z = (int16_t)(b[4] << 8 | b[5]) * kScale;
+  float sx = (int16_t)(b[0] << 8 | b[1]) * kScale;
+  float sy = (int16_t)(b[2] << 8 | b[3]) * kScale;
+  float sz = (int16_t)(b[4] << 8 | b[5]) * kScale;
+  // Rotate sensor axes into buoy axes (z up), keeping a right-handed frame.
+#if MPU_UP == MPU_UP_PX
+  x = -sz, y = sy, z = sx;
+#elif MPU_UP == MPU_UP_NX
+  x = sz, y = sy, z = -sx;
+#elif MPU_UP == MPU_UP_PY
+  x = sx, y = -sz, z = sy;
+#elif MPU_UP == MPU_UP_NY
+  x = sx, y = sz, z = -sy;
+#elif MPU_UP == MPU_UP_NZ
+  x = sx, y = -sy, z = -sz;
+#else
+  x = sx, y = sy, z = sz;
+#endif
   return true;
 }
 

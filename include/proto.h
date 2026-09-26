@@ -21,6 +21,19 @@
 #define SEGMENT_RECORDS      256
 #define FS_RESERVE_BYTES     (64 * 1024)
 
+// Which MPU axis points up when the buoy floats level; the firmware rotates
+// readings so tilt is measured from level. The MPU on the buoy board stands
+// on edge with +X up.
+#define MPU_UP_PZ 0  // chip lying flat, facing up
+#define MPU_UP_PX 1
+#define MPU_UP_NX 2
+#define MPU_UP_PY 3
+#define MPU_UP_NY 4
+#define MPU_UP_NZ 5
+#ifndef MPU_UP
+#define MPU_UP MPU_UP_PX
+#endif
+
 // ---- Pins (see docs/wiring.svg) ------------------------------------------
 #define PIN_I2C_SDA   21
 #define PIN_I2C_SCL   22
