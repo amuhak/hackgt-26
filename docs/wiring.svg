@@ -1,0 +1,140 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 900 760" width="900" height="760" font-family="Segoe UI, Helvetica, Arial, sans-serif">
+  <style>
+    .box   { fill: #f6f7f9; stroke: #333; stroke-width: 2; }
+    .esp   { fill: #1f3b57; stroke: #0e1f30; stroke-width: 2; }
+    .title { font-size: 16px; font-weight: 700; fill: #111; }
+    .sub   { font-size: 11px; fill: #555; }
+    .pin   { font-size: 12px; fill: #111; }
+    .epin  { font-size: 12px; fill: #fff; text-anchor: end; }
+    .note  { font-size: 12px; fill: #222; }
+    .w     { fill: none; stroke-width: 3; stroke-linecap: round; }
+    .v33   { stroke: #d62728; } .gnd { stroke: #222; } .v5 { stroke: #ff7f0e; }
+    .sda   { stroke: #1f77b4; } .scl { stroke: #e6b800; } .ow { stroke: #9467bd; }
+    .gtx   { stroke: #2ca02c; } .grx { stroke: #17becf; }
+    .dash  { stroke-dasharray: 6 5; }
+  </style>
+  <rect width="900" height="760" fill="#ffffff"/>
+  <text x="20" y="32" class="title" font-size="20">Buoy node wiring</text>
+  <text x="20" y="50" class="sub">Crossing wires without a dot are not connected. Match ESP32 pin names on the board silkscreen; physical positions vary by board.</text>
+
+  <!-- ESP32 -->
+  <rect x="40" y="70" width="220" height="560" rx="10" class="esp"/>
+  <text x="150" y="340" fill="#fff" font-size="18" font-weight="700" text-anchor="middle">ESP32</text>
+  <text x="150" y="360" fill="#cfe0f0" font-size="12" text-anchor="middle">DevKit (WROOM)</text>
+  <text x="150" y="376" fill="#cfe0f0" font-size="12" text-anchor="middle">USB-C / CP210x</text>
+  <text x="252" y="94"  class="epin">3V3</text>
+  <text x="252" y="114" class="epin">GND</text>
+  <text x="252" y="154" class="epin">VIN (5V)</text>
+  <text x="252" y="234" class="epin">GPIO21 (SDA)</text>
+  <text x="252" y="254" class="epin">GPIO22 (SCL)</text>
+  <text x="252" y="474" class="epin">GPIO4</text>
+  <text x="252" y="579" class="epin">GPIO16 (RX2)</text>
+  <text x="252" y="599" class="epin">GPIO17 (TX2)</text>
+
+  <!-- Buses -->
+  <path class="w v33" d="M310 80 V425"/>
+  <path class="w gnd" d="M330 100 V555"/>
+  <path class="w v5"  d="M350 150 V535"/>
+  <path class="w sda" d="M380 140 V320"/>
+  <path class="w scl" d="M400 120 V300"/>
+
+  <!-- ESP32 -> buses -->
+  <path class="w v33" d="M260 90 H310"/>
+  <path class="w gnd" d="M260 110 H330"/>
+  <path class="w v5"  d="M260 150 H350"/>
+  <path class="w sda" d="M260 230 H380"/>
+  <path class="w scl" d="M260 250 H400"/>
+
+  <!-- BMP280 -->
+  <rect x="560" y="62" width="300" height="140" rx="8" class="box"/>
+  <text x="700" y="88"  class="title">BMP280 (3.3V)</text>
+  <text x="700" y="106" class="sub">pressure + air temp</text>
+  <text x="700" y="122" class="sub">I2C addr 0x76</text>
+  <text x="568" y="84"  class="pin">VCC</text>
+  <text x="568" y="104" class="pin">GND</text>
+  <text x="568" y="124" class="pin">SCL</text>
+  <text x="568" y="144" class="pin">SDA</text>
+  <text x="568" y="164" class="pin">CSB</text>
+  <text x="568" y="184" class="pin">SDO</text>
+  <path class="w v33" d="M310 80 H560"/>
+  <path class="w gnd" d="M330 100 H560"/>
+  <path class="w scl" d="M400 120 H560"/>
+  <path class="w sda" d="M380 140 H560"/>
+  <path class="w v33 dash" d="M310 160 H560"/>
+  <path class="w gnd" d="M330 180 H560"/>
+  <text x="610" y="164" class="sub">(if broken out)</text>
+
+  <!-- MPU6050 -->
+  <rect x="560" y="242" width="300" height="118" rx="8" class="box"/>
+  <text x="700" y="268" class="title">MPU6050</text>
+  <text x="700" y="286" class="sub">accelerometer / gyro</text>
+  <text x="700" y="302" class="sub">I2C addr 0x68, INT unused</text>
+  <text x="568" y="264" class="pin">VCC</text>
+  <text x="568" y="284" class="pin">GND</text>
+  <text x="568" y="304" class="pin">SCL</text>
+  <text x="568" y="324" class="pin">SDA</text>
+  <text x="568" y="344" class="pin">AD0</text>
+  <path class="w v33" d="M310 260 H560"/>
+  <path class="w gnd" d="M330 280 H560"/>
+  <path class="w scl" d="M400 300 H560"/>
+  <path class="w sda" d="M380 320 H560"/>
+  <path class="w gnd" d="M330 340 H560"/>
+
+  <!-- DS18B20 -->
+  <rect x="560" y="384" width="300" height="104" rx="8" class="box"/>
+  <text x="700" y="410" class="title">DS18B20</text>
+  <text x="700" y="428" class="sub">water temp (1-Wire)</text>
+  <text x="700" y="444" class="sub">probe: red VDD, black GND,</text>
+  <text x="700" y="458" class="sub">yellow DQ</text>
+  <text x="568" y="404" class="pin">GND</text>
+  <text x="568" y="429" class="pin">VDD</text>
+  <text x="568" y="474" class="pin">DQ</text>
+  <path class="w gnd" d="M330 400 H560"/>
+  <path class="w v33" d="M310 425 H560"/>
+  <path class="w ow"  d="M260 470 H560"/>
+  <!-- 4.7k pull-up between VDD and DQ -->
+  <path class="w ow" d="M520 470 V460 l-7 -3 l14 -6 l-14 -6 l14 -6 l-14 -6 l7 -3 V425" stroke="#9467bd"/>
+  <text x="462" y="452" class="pin" font-weight="700">4.7 kΩ</text>
+
+  <!-- NEO-6M -->
+  <rect x="560" y="514" width="300" height="100" rx="8" class="box"/>
+  <text x="700" y="540" class="title">NEO-6M GPS</text>
+  <text x="700" y="558" class="sub">GY-NEO6MV2, 9600 baud</text>
+  <text x="700" y="574" class="sub">antenna must see the sky</text>
+  <text x="568" y="539" class="pin">VCC</text>
+  <text x="568" y="559" class="pin">GND</text>
+  <text x="568" y="579" class="pin">TX</text>
+  <text x="568" y="599" class="pin">RX</text>
+  <path class="w v5"  d="M350 535 H560"/>
+  <path class="w gnd" d="M330 555 H560"/>
+  <path class="w gtx" d="M260 575 H560"/>
+  <path class="w grx" d="M260 595 H560"/>
+
+  <!-- Junction dots -->
+  <g fill="#111">
+    <circle cx="310" cy="90"  r="4.5"/><circle cx="310" cy="80"  r="4.5"/><circle cx="310" cy="160" r="4.5"/>
+    <circle cx="310" cy="260" r="4.5"/><circle cx="310" cy="425" r="4.5"/>
+    <circle cx="330" cy="110" r="4.5"/><circle cx="330" cy="100" r="4.5"/><circle cx="330" cy="180" r="4.5"/>
+    <circle cx="330" cy="280" r="4.5"/><circle cx="330" cy="340" r="4.5"/><circle cx="330" cy="400" r="4.5"/>
+    <circle cx="330" cy="555" r="4.5"/>
+    <circle cx="350" cy="150" r="4.5"/><circle cx="350" cy="535" r="4.5"/>
+    <circle cx="380" cy="230" r="4.5"/><circle cx="380" cy="140" r="4.5"/><circle cx="380" cy="320" r="4.5"/>
+    <circle cx="400" cy="250" r="4.5"/><circle cx="400" cy="120" r="4.5"/><circle cx="400" cy="300" r="4.5"/>
+    <circle cx="520" cy="470" r="4.5"/><circle cx="520" cy="425" r="4.5"/>
+  </g>
+
+  <!-- Legend / notes -->
+  <g transform="translate(40,650)">
+    <path class="w v33" d="M0 6 H24"/><text x="30" y="10" class="note">3.3V</text>
+    <path class="w v5"  d="M80 6 H104"/><text x="110" y="10" class="note">5V</text>
+    <path class="w gnd" d="M150 6 H174"/><text x="180" y="10" class="note">GND</text>
+    <path class="w sda" d="M230 6 H254"/><text x="260" y="10" class="note">I2C SDA</text>
+    <path class="w scl" d="M330 6 H354"/><text x="360" y="10" class="note">I2C SCL</text>
+    <path class="w ow"  d="M430 6 H454"/><text x="460" y="10" class="note">1-Wire</text>
+    <path class="w gtx" d="M520 6 H544"/><text x="550" y="10" class="note">GPS TX → ESP RX2</text>
+    <path class="w grx" d="M680 6 H704"/><text x="710" y="10" class="note">ESP TX2 → GPS RX</text>
+    <text x="0" y="40" class="note">• BMP280 and MPU6050 share one I2C bus; different addresses, so no conflict.</text>
+    <text x="0" y="58" class="note">• GPS TX/RX cross over. On a WROVER board GPIO16/17 belong to PSRAM, so use GPIO25/26 and change PIN_GPS_* in include/proto.h.</text>
+    <text x="0" y="76" class="note">• Use the BMP280 "3.3" module only on 3V3. It is not 5V tolerant.</text>
+  </g>
+</svg>
