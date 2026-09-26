@@ -81,7 +81,7 @@ uint32_t mpuErrors = 0;
 #ifdef DEBUG_LOG
 // Echoes raw GPS bytes a line at a time; unprintable bytes (wrong baud,
 // noise) show as '?'.
-char gpsLine[100];
+char gpsLine[128];  // $PUBX,00 replies run past 100 chars
 size_t gpsLen = 0;
 
 void echoGps(char c) {

@@ -37,6 +37,9 @@ class Mesh {
   Mesh(MeshNode* node, uint32_t selfId, Radio* radio);
   void receive(const uint8_t* data, size_t len, uint32_t now);
   void loop(uint32_t now);  // call often
+  // Broadcasts a record we just created, so neighbors get it now instead of
+  // after our next summary.
+  void push(const Record& r);
 
   // Diagnostics for soak tests.
   struct Counters {
@@ -84,6 +87,8 @@ class Mesh {
   uint32_t lastDataAt_ = 0;
   Want wants_[MAX_ORIGINS] = {};
   size_t wantCursor_ = 0;
+  bool pushPending_ = false;
+  Record push_;
   bool nackPending_ = false;
   uint32_t nackOrigin_ = 0;
   uint32_t lastNackAt_ = 0;

@@ -4,7 +4,9 @@
 #include <stddef.h>
 
 // ---- Tunables -------------------------------------------------------------
+#ifndef SAMPLE_PERIOD_MS
 #define SAMPLE_PERIOD_MS     30000UL  // one record per buoy per period
+#endif
 #define IMU_SAMPLE_MS        20UL     // 50 Hz wave sampling
 #define SUMMARY_INTERVAL_MS  5000UL   // + up to 1 s jitter
 #define DATA_GAP_MS          15UL     // min spacing between DATA frames we send

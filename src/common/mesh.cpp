@@ -222,6 +222,11 @@ void Mesh::serveData(uint32_t now) {
   }
 }
 
+void Mesh::push(const Record& r) {
+  push_ = r;
+  pushPending_ = true;
+}
+
 void Mesh::loop(uint32_t now) {
   if (now - availRotatedAt_ >= 2 * SUMMARY_INTERVAL_MS) {
     availRotatedAt_ = now;
@@ -234,7 +239,21 @@ void Mesh::loop(uint32_t now) {
     nextSummaryAt_ = now + SUMMARY_INTERVAL_MS + random(1000);
     if (node_->advertise()) summaryPage_ = 0;
   }
-  // NACKs and summary pages take priority over data.
+  // A fresh record, then NACKs and summary pages, take priority over data.
+  if (pushPending_) {
+    OriginState s;
+    if (!node_->state(push_.origin, s)) {
+      pushPending_ = false;
+    } else if (radio_->ready()) {
+      DataMsg m;
+      fillHeader(m.h, MSG_DATA, 1);
+      m.first = max(s.first, s.acked);
+      m.r[0] = push_;
+      if (radio_->send(&m, offsetof(DataMsg, r) + sizeof(Record))) counters.dataSent++;
+      pushPending_ = false;
+    }
+    return;
+  }
   if (nackPending_) {
     if (radio_->ready()) {
       sendNack(nackOrigin_);

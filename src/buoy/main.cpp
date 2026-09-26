@@ -155,8 +155,12 @@ void loop() {
     lastSampleAt = now;
     Record r = {};
     sensors::fill(r);
-    if (store.appendOwn(&r)) logRecord(r);
-    else Serial.println("store: append FAILED");
+    if (store.appendOwn(&r)) {
+      mesh->push(r);
+      logRecord(r);
+    } else {
+      Serial.println("store: append FAILED");
+    }
   }
   if (now - lastStatusAt >= STAT_EVERY_MS) {
     lastStatusAt = now;

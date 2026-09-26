@@ -115,7 +115,7 @@ void run(uint32_t ms) {
         if (!alive[i]) continue;
         Record r = {};
         r.uptime_s = simNow / 1000;
-        stores[i].appendOwn(&r);
+        if (stores[i].appendOwn(&r)) meshes[i]->push(r);
       }
     }
     // The laptop commits and acks every 500 ms, like tools/collector.py.
