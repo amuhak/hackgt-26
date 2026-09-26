@@ -14,6 +14,23 @@ void Mesh::fillHeader(MsgHeader& h, MsgType type, uint8_t count) {
   h.sender = self_;
 }
 
+void Mesh::noteAvail(uint32_t origin, uint32_t from) {
+  for (size_t i = 0; i < availCount_; i++) {
+    if (avail_[i].origin == origin) {
+      avail_[i].cur = min(avail_[i].cur, from);
+      return;
+    }
+  }
+  if (availCount_ < MAX_ORIGINS) avail_[availCount_++] = {origin, from, UINT32_MAX};
+}
+
+uint32_t Mesh::availFrom(uint32_t origin) {
+  for (size_t i = 0; i < availCount_; i++) {
+    if (avail_[i].origin == origin) return min(avail_[i].cur, avail_[i].prev);
+  }
+  return UINT32_MAX;
+}
+
 Mesh::Want* Mesh::findWant(uint32_t origin, bool create) {
   Want* freeSlot = nullptr;
   for (auto& w : wants_) {
@@ -53,7 +70,12 @@ void Mesh::sendNack(uint32_t origin) {
 }
 
 void Mesh::onSummary(const SummaryMsg& m, uint32_t now) {
-  for (size_t i = 0; i < m.h.count; i++) node_->peerState(m.e[i]);
+  for (size_t i = 0; i < m.h.count; i++) {
+    const OriginState& e = m.e[i];
+    node_->peerState(e);
+    uint32_t sendable = max(e.first, e.acked);
+    if (sendable < e.next) noteAvail(e.origin, sendable);
+  }
 
   // Anything we hold in [lo, hi] that the peer lacks (or doesn't list at all)
   // becomes a want.
@@ -86,7 +108,10 @@ void Mesh::onData(const DataMsg& m, uint32_t now) {
     if (m.r[i].origin != origin || m.r[i].seq != seq + i) return;  // malformed
   }
   counters.dataHeard++;
-  node_->ingest(m.r, m.h.count, m.first);
+  // Skip a gap only if no neighbor we've heard lately can fill it, not just
+  // this sender (which may have evicted records others still hold).
+  noteAvail(origin, m.first);
+  node_->ingest(m.r, m.h.count, min(m.first, availFrom(origin)));
 
   // Still behind this frame means we missed one before it: ask for a resend.
   OriginState s;
@@ -153,6 +178,13 @@ void Mesh::serveData(uint32_t now) {
 }
 
 void Mesh::loop(uint32_t now) {
+  if (now - availRotatedAt_ >= 2 * SUMMARY_INTERVAL_MS) {
+    availRotatedAt_ = now;
+    for (size_t i = 0; i < availCount_; i++) {
+      avail_[i].prev = avail_[i].cur;
+      avail_[i].cur = UINT32_MAX;
+    }
+  }
   if ((int32_t)(now - nextSummaryAt_) >= 0) {
     nextSummaryAt_ = now + SUMMARY_INTERVAL_MS + random(1000);
     if (node_->advertise()) summaryPage_ = 0;

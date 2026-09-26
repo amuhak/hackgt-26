@@ -27,6 +27,7 @@ class Store : public MeshNode {
   String segPath(uint32_t origin, uint32_t seg);
   String metaPath(uint32_t origin);
   bool write(OriginState& s, const Record* r, size_t n);
+  size_t writeAt(const String& path, bool exists, size_t off, const Record* r, size_t batch);
   void prune(OriginState& s);
   void restartAt(OriginState& s, uint32_t seq);
   void deleteSegments(const OriginState& s, uint32_t fromSeg, uint32_t toSeg);

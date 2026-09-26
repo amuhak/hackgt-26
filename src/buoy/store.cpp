@@ -182,28 +182,40 @@ bool Store::write(OriginState& s, const Record* r, size_t n) {
 
     bool exists = fileExists(path);
     if (!exists) ensureSpace();
-    File f = LittleFS.open(path, exists ? "r+" : "w");
-    if (!f) return false;
-    if (f.size() < off) {
-      // Records before `first` in this segment are never read; pad them.
-      f.seek(f.size());
-      uint8_t zeros[64] = {};
-      for (size_t left = off - f.size(); left > 0;) {
-        size_t chunk = min(left, sizeof(zeros));
-        f.write(zeros, chunk);
-        left -= chunk;
-      }
+    size_t wrote = writeAt(path, exists, off, r, batch);
+    if (wrote != batch * sizeof(Record)) {
+      // Flash filled up between segment creations: evict and retry once.
+      ensureSpace();
+      wrote = writeAt(path, fileExists(path), off, r, batch);
+      if (wrote != batch * sizeof(Record)) return false;
     }
-    f.seek(off);
-    size_t wrote = f.write(reinterpret_cast<const uint8_t*>(r), batch * sizeof(Record));
-    f.close();
-    if (wrote != batch * sizeof(Record)) return false;
 
     s.next += batch;
     r += batch;
     n -= batch;
   }
   return true;
+}
+
+// Writes `batch` records at byte offset `off` of a segment file, zero-padding
+// any hole before it. Returns bytes written.
+size_t Store::writeAt(const String& path, bool exists, size_t off, const Record* r, size_t batch) {
+  File f = LittleFS.open(path, exists ? "r+" : "w");
+  if (!f) return 0;
+  if (f.size() < off) {
+    // Records before `first` in this segment are never read; pad them.
+    f.seek(f.size());
+    uint8_t zeros[64] = {};
+    for (size_t left = off - f.size(); left > 0;) {
+      size_t chunk = min(left, sizeof(zeros));
+      f.write(zeros, chunk);
+      left -= chunk;
+    }
+  }
+  f.seek(off);
+  size_t wrote = f.write(reinterpret_cast<const uint8_t*>(r), batch * sizeof(Record));
+  f.close();
+  return wrote;
 }
 
 bool Store::appendOwn(Record* r, size_t n) {

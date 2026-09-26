@@ -52,6 +52,15 @@ class Mesh {
     bool active;
   };
 
+  // Oldest seq any recently heard neighbor can still send, per origin, as a
+  // min over two rotating windows so stale values age out.
+  struct Avail {
+    uint32_t origin;
+    uint32_t cur, prev;
+  };
+
+  void noteAvail(uint32_t origin, uint32_t from);
+  uint32_t availFrom(uint32_t origin);
   void fillHeader(MsgHeader& h, MsgType type, uint8_t count);
   Want* findWant(uint32_t origin, bool create);
   bool sendSummaryPage(int page);
@@ -71,6 +80,9 @@ class Mesh {
   bool nackPending_ = false;
   uint32_t nackOrigin_ = 0;
   uint32_t lastNackAt_ = 0;
+  Avail avail_[MAX_ORIGINS] = {};
+  size_t availCount_ = 0;
+  uint32_t availRotatedAt_ = 0;
   OriginState scratch_[MAX_ORIGINS];
 };
 
