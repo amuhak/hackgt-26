@@ -22,6 +22,8 @@ class MeshNode {
   virtual bool advertise() { return true; }
   // True for the collector: neighbors serve it before other buoys.
   virtual bool sink() { return false; }
+  // Live IMU samples from a neighbor (only the collector uses them).
+  virtual void motion(const MotionMsg&, size_t) {}
 };
 
 // Broadcast transport. ESP-NOW on hardware, simulated in the mesh test.
@@ -40,6 +42,10 @@ class Mesh {
   // Broadcasts a record we just created, so neighbors get it now instead of
   // after our next summary.
   void push(const Record& r);
+  // Broadcasts live IMU samples; best effort, nobody stores or relays them.
+  void sendMotion(const MotionMsg& m, size_t n);
+  // A collector has been heard recently, so live data has someone to go to.
+  bool sinkNearby(uint32_t now) const { return sinkSeen_ && now - lastSinkAt_ < WANT_TIMEOUT_MS; }
 
   // Diagnostics for soak tests.
   struct Counters {
@@ -89,6 +95,11 @@ class Mesh {
   size_t wantCursor_ = 0;
   bool pushPending_ = false;
   Record push_;
+  bool motionPending_ = false;
+  MotionMsg motion_;
+  size_t motionN_ = 0;
+  bool sinkSeen_ = false;
+  uint32_t lastSinkAt_ = 0;
   bool nackPending_ = false;
   uint32_t nackOrigin_ = 0;
   uint32_t lastNackAt_ = 0;

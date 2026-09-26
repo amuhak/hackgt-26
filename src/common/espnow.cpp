@@ -50,7 +50,10 @@ void logFrame(const char* dir, const uint8_t* d, size_t len, int rssi) {
     Serial.printf("%s foreign frame, %u bytes, magic 0x%02x version %u\n", dir, (unsigned)len, h.magic, h.version);
     return;
   }
-  const char* type = h.type == MSG_DATA ? "DATA" : h.type == MSG_SINK_SUMMARY ? "SINK-SUMMARY" : "SUMMARY";
+  const char* type = h.type == MSG_DATA           ? "DATA"
+                     : h.type == MSG_SINK_SUMMARY ? "SINK-SUMMARY"
+                     : h.type == MSG_MOTION       ? "MOTION"
+                                                  : "SUMMARY";
   Serial.printf("%s %s from %08lx, %u bytes", dir, type, (unsigned long)h.sender, (unsigned)len);
   if (rssi) Serial.printf(", rssi %d dBm", rssi);
   if (h.type == MSG_DATA && h.count > 0 && len >= offsetof(DataMsg, r) + h.count * sizeof(Record)) {
@@ -58,6 +61,8 @@ void logFrame(const char* dir, const uint8_t* d, size_t len, int rssi) {
     memcpy(&m, d, min(len, sizeof(m)));
     Serial.printf(": %08lx seq %lu..%lu (sender first %lu)", (unsigned long)m.r[0].origin, (unsigned long)m.r[0].seq,
                   (unsigned long)(m.r[0].seq + h.count - 1), (unsigned long)m.first);
+  } else if (h.type == MSG_MOTION) {
+    Serial.printf(": %u samples", h.count);
   } else if (h.type != MSG_DATA && h.count <= SUMMARY_MAX_ENTRIES &&
              len >= offsetof(SummaryMsg, e) + h.count * sizeof(OriginState)) {
     SummaryMsg m;

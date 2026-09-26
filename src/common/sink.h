@@ -1,6 +1,6 @@
 // The collector's mesh node. It stores nothing: it advertises how far the
 // laptop has got per origin, so buoys push whatever the laptop lacks, and hands
-// each new record to `emit`.
+// each new record to `emit` (and live IMU frames to `onMotion`).
 #pragma once
 #include <Arduino.h>
 
@@ -10,7 +10,9 @@
 
 class CollectorSink : public MeshNode {
  public:
-  explicit CollectorSink(std::function<void(const Record&)> emit) : emit_(emit) {}
+  using MotionFn = std::function<void(const MotionMsg&, size_t)>;
+  explicit CollectorSink(std::function<void(const Record&)> emit, MotionFn onMotion = nullptr)
+      : emit_(emit), motion_(onMotion) {}
 
   bool started = false;
 
@@ -48,6 +50,9 @@ class CollectorSink : public MeshNode {
   void peerState(const OriginState&) override {}
   bool advertise() override { return started; }
   bool sink() override { return true; }
+  void motion(const MotionMsg& m, size_t n) override {
+    if (started && motion_) motion_(m, n);
+  }
 
   // The laptop already has everything below `next`.
   void have(uint32_t origin, uint32_t next) {
@@ -90,6 +95,7 @@ class CollectorSink : public MeshNode {
   }
 
   std::function<void(const Record&)> emit_;
+  MotionFn motion_;
   OriginState table_[MAX_ORIGINS];  // first == next == what the laptop has
   size_t count_ = 0;
 };

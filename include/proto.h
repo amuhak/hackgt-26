@@ -84,7 +84,8 @@ struct __attribute__((packed)) OriginState {
 #define MSG_MAGIC    0xB7
 #define MSG_VERSION  1
 // MSG_SINK_SUMMARY: a collector's summary (same layout); buoys serve it first.
-enum MsgType : uint8_t { MSG_SUMMARY = 1, MSG_DATA = 2, MSG_SINK_SUMMARY = 3 };
+// MSG_MOTION: live IMU samples for a collector in direct range; never stored or relayed.
+enum MsgType : uint8_t { MSG_SUMMARY = 1, MSG_DATA = 2, MSG_SINK_SUMMARY = 3, MSG_MOTION = 4 };
 
 struct __attribute__((packed)) MsgHeader {
   uint8_t  magic;
@@ -115,5 +116,25 @@ struct __attribute__((packed)) DataMsg {
   Record    r[DATA_MAX_RECORDS];
 };
 
+// One 50 Hz IMU sample in buoy axes (z up), raw: accel 8192 LSB/g (+-4 g),
+// gyro 65.5 LSB/(deg/s) (+-500 deg/s, boot-time bias removed).
+struct __attribute__((packed)) MotionSample {
+  int16_t ax, ay, az;
+  int16_t gx, gy, gz;
+};
+
+#define MOTION_SAMPLES 16
+#define ACCEL_LSB_PER_G 8192.0f
+#define GYRO_LSB_PER_DPS 65.5f
+// `count` consecutive samples, `period_ms` apart, the first taken at `t0_ms`
+// on the sender's clock (sample index * period, so gaps show up).
+struct __attribute__((packed)) MotionMsg {
+  MsgHeader    h;
+  uint32_t     t0_ms;
+  uint16_t     period_ms;
+  MotionSample s[MOTION_SAMPLES];
+};
+
 static_assert(sizeof(SummaryMsg) <= 250, "SummaryMsg too big for ESP-NOW");
+static_assert(sizeof(MotionMsg) <= 250, "MotionMsg too big for ESP-NOW");
 static_assert(sizeof(DataMsg) <= 250, "DataMsg too big for ESP-NOW");

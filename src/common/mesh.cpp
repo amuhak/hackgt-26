@@ -82,6 +82,10 @@ void Mesh::sendNack(uint32_t origin) {
 }
 
 void Mesh::onSummary(const SummaryMsg& m, uint32_t now, bool fromSink) {
+  if (fromSink) {
+    sinkSeen_ = true;
+    lastSinkAt_ = now;
+  }
   for (size_t i = 0; i < m.h.count; i++) {
     const OriginState& e = m.e[i];
     node_->peerState(e);
@@ -177,6 +181,11 @@ void Mesh::receive(const uint8_t* data, size_t len, uint32_t now) {
     DataMsg m;
     memcpy(&m, data, min(len, sizeof(m)));
     onData(m, now);
+  } else if (h.type == MSG_MOTION && h.count <= MOTION_SAMPLES &&
+             len >= offsetof(MotionMsg, s) + h.count * sizeof(MotionSample)) {
+    MotionMsg m;
+    memcpy(&m, data, min(len, sizeof(m)));
+    node_->motion(m, h.count);
   }
 }
 
@@ -227,6 +236,13 @@ void Mesh::push(const Record& r) {
   pushPending_ = true;
 }
 
+void Mesh::sendMotion(const MotionMsg& m, size_t n) {
+  motion_ = m;
+  fillHeader(motion_.h, MSG_MOTION, n);
+  motionN_ = n;
+  motionPending_ = true;
+}
+
 void Mesh::loop(uint32_t now) {
   if (now - availRotatedAt_ >= 2 * SUMMARY_INTERVAL_MS) {
     availRotatedAt_ = now;
@@ -251,6 +267,13 @@ void Mesh::loop(uint32_t now) {
       m.r[0] = push_;
       if (radio_->send(&m, offsetof(DataMsg, r) + sizeof(Record))) counters.dataSent++;
       pushPending_ = false;
+    }
+    return;
+  }
+  if (motionPending_) {
+    if (radio_->ready()) {
+      radio_->send(&motion_, offsetof(MotionMsg, s) + motionN_ * sizeof(MotionSample));
+      motionPending_ = false;
     }
     return;
   }

@@ -147,6 +147,9 @@ void loop() {
   backfillStep();
 #endif
   sensors::poll();
+  static MotionMsg motion;
+  size_t motionN;
+  if (sensors::takeMotion(motion, motionN) && mesh->sinkNearby(millis())) mesh->sendMotion(motion, motionN);
   espnow::poll(*mesh);
   mesh->loop(millis());
 

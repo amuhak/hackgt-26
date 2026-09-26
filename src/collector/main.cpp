@@ -3,6 +3,7 @@
 // Serial protocol (921600 baud, newline-terminated):
 //   -> laptop  READY <self hex>               until START is received
 //   -> laptop  REC <84 hex chars> <crc32 hex> one raw Record, CRC-32 (zlib) of its bytes
+//   -> laptop  MOT <hex> <crc32 hex>        one raw MotionMsg (live IMU samples from a buoy in range)
 //   -> laptop  LOG <text>
 //   <- laptop  HAVE <origin hex> <next>       laptop already has seq < next
 //   <- laptop  START                          begin advertising
@@ -29,7 +30,15 @@ static void emit(const Record& r) {
   Serial.printf(" %08lx\n", (unsigned long)crc32(b, sizeof(Record)));
 }
 
-static CollectorSink sink(emit);
+static void emitMotion(const MotionMsg& m, size_t n) {
+  Serial.print("MOT ");
+  const uint8_t* b = reinterpret_cast<const uint8_t*>(&m);
+  size_t len = offsetof(MotionMsg, s) + n * sizeof(MotionSample);
+  for (size_t k = 0; k < len; k++) Serial.printf("%02x", b[k]);
+  Serial.printf(" %08lx\n", (unsigned long)crc32(b, len));
+}
+
+static CollectorSink sink(emit, emitMotion);
 static Mesh* mesh;
 static uint32_t id;
 static char line[64];

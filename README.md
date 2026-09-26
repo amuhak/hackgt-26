@@ -26,12 +26,19 @@ pio run -e buoy -t upload --upload-port COM5
 pio device monitor -p COM5            # boot log, I2C scan, one sample every 30 s; type STAT for counters
 ```
 
-Collect data into SQLite (`readings` table, one row per buoy sample):
+Collect data into SQLite:
 
 ```
 pio run -e collector -t upload --upload-port COM6
 python tools/collector.py COM6 --db buoy.db
 ```
+
+| Table | Rows | Source |
+|---|---|---|
+| `readings` | one per buoy sample (every 30 s, or 2 s with `buoy_demo`) | stored and relayed by the mesh; nothing is lost |
+| `motion` | 50 per second per buoy: accel (g), gyro (deg/s), orientation quaternion and roll/pitch/yaw | live only, from buoys in direct range of the collector; committed within 0.5 s, for 3D rendering |
+
+The motion axes are the buoy's: x forward, y left, z up. The quaternion `qw qx qy qz` rotates buoy to world. It comes from a Mahony filter over the accelerometer and gyro. Yaw drifts about 0.5 deg/min, because there's no magnetometer.
 
 ## How the mesh works
 
@@ -43,6 +50,7 @@ python tools/collector.py COM6 --db buoy.db
 - The collector advertises what the laptop's DB already has, so buoys only send new records. Once the DB commits, the collector's ack spreads through the mesh and buoys delete the delivered data.
 - Buoys serve the collector before lagging buoys, since delivered records get deleted anyway.
 - Serial lines to the laptop carry a CRC. On a bad or missing line, `collector.py` asks the collector to resend from its last ack.
+- While a collector is in direct range, a buoy also broadcasts its raw 50 Hz IMU samples, 16 per frame (~3 frames/s). These are read from the MPU's FIFO, so loop stalls don't drop any. They're never stored or relayed.
 
 Tunables (sample period, channel, long-range mode) and pins are in `include/proto.h`.
 

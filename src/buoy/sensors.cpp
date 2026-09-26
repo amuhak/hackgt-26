@@ -63,9 +63,54 @@ struct Waves {
 Waves waves;
 uint32_t lastImuAt = 0;
 
+// Live motion: 50 Hz samples batched into MotionMsg frames for the collector.
+MotionMsg motionBuf, motionOut;
+size_t motionN = 0;
+bool motionReady = false;
+uint32_t imuIndex = 0;  // sample number on a 50 Hz grid, so the laptop sees gaps
+
+void addMotion(const int16_t a[3], const int16_t g[3]) {
+  if (motionN == 0) {
+    motionBuf.t0_ms = imuIndex * IMU_SAMPLE_MS;
+    motionBuf.period_ms = IMU_SAMPLE_MS;
+  }
+  motionBuf.s[motionN++] = {a[0], a[1], a[2], g[0], g[1], g[2]};
+  imuIndex++;
+  if (motionN == MOTION_SAMPLES) {
+    motionOut = motionBuf;
+    motionReady = true;
+    motionN = 0;
+  }
+}
+
+int16_t clamp16(float v) { return (int16_t)constrain(lroundf(v), -32768L, 32767L); }
+
 #ifdef SIM_SENSORS
 
 float noise(float amp) { return amp * ((int32_t)(esp_random() % 2001) - 1000) / 1000.0f; }
+
+// A buoy rocking in a swell: roll 10 deg over 4 s, pitch 6 deg over 6.5 s,
+// 1.5 m/s2 of heave over 6 s. Gyro rates match the angles, so the laptop's
+// orientation filter can be checked against a known answer.
+void simImu(uint32_t now) {
+  float t = now / 1000.0f;
+  float w1 = 2 * PI / 4.0f, w2 = 2 * PI / 6.5f;
+  float roll = radians(10.0f) * sinf(w1 * t), pitch = radians(6.0f) * sinf(w2 * t);
+  float rollRate = radians(10.0f) * w1 * cosf(w1 * t), pitchRate = radians(6.0f) * w2 * cosf(w2 * t);
+  float up = kG + 1.5f * sinf(t * 2 * PI / 6.0f);
+  float ax = -up * sinf(pitch) + noise(0.1f);
+  float ay = up * sinf(roll) * cosf(pitch) + noise(0.1f);
+  float az = up * cosf(roll) * cosf(pitch) + noise(0.1f);
+  waves.add(ax, ay, az);
+  // Body rates with no yaw: p = roll', q = pitch' cos(roll), r = -pitch' sin(roll).
+  float rates[3] = {rollRate, pitchRate * cosf(roll), -pitchRate * sinf(roll)};
+  int16_t a[3] = {clamp16(ax / kG * ACCEL_LSB_PER_G), clamp16(ay / kG * ACCEL_LSB_PER_G),
+                  clamp16(az / kG * ACCEL_LSB_PER_G)};
+  int16_t g[3];
+  for (int k = 0; k < 3; k++) g[k] = clamp16(degrees(rates[k]) * GYRO_LSB_PER_DPS);
+  imuIndex = now / IMU_SAMPLE_MS;
+  addMotion(a, g);
+}
 
 #else
 
@@ -125,6 +170,64 @@ bool mpuRead(uint8_t reg, uint8_t* buf, size_t n) {
   return true;
 }
 
+size_t fifoSize = 512;
+int16_t gyroBias[3] = {0, 0, 0};
+uint32_t fifoResets = 0;
+
+int16_t be16(const uint8_t* b) { return (int16_t)(b[0] << 8 | b[1]); }
+int16_t neg16(int16_t v) { return v == INT16_MIN ? INT16_MAX : -v; }
+
+// Rotates a sensor-axes vector into buoy axes (z up), keeping a right-handed frame.
+void toBuoy(const int16_t s[3], int16_t o[3]) {
+#if MPU_UP == MPU_UP_PX
+  o[0] = neg16(s[2]), o[1] = s[1], o[2] = s[0];
+#elif MPU_UP == MPU_UP_NX
+  o[0] = s[2], o[1] = s[1], o[2] = neg16(s[0]);
+#elif MPU_UP == MPU_UP_PY
+  o[0] = s[0], o[1] = neg16(s[2]), o[2] = s[1];
+#elif MPU_UP == MPU_UP_NY
+  o[0] = s[0], o[1] = s[2], o[2] = neg16(s[1]);
+#elif MPU_UP == MPU_UP_NZ
+  o[0] = s[0], o[1] = neg16(s[1]), o[2] = neg16(s[2]);
+#else
+  o[0] = s[0], o[1] = s[1], o[2] = s[2];
+#endif
+}
+
+void mpuFifoReset() {
+  mpuWrite(0x6A, 0x04);  // FIFO_RST
+  mpuWrite(0x6A, 0x40);  // FIFO_EN
+  imuIndex = millis() / IMU_SAMPLE_MS;  // sample times stay honest across the gap
+  motionN = 0;
+}
+
+// Gyro zero-rate offset, measured at boot if the buoy is sitting still.
+void calibrateGyro() {
+  const int n = 50;
+  int32_t sum[3] = {0, 0, 0};
+  int16_t lo[3] = {INT16_MAX, INT16_MAX, INT16_MAX}, hi[3] = {INT16_MIN, INT16_MIN, INT16_MIN};
+  for (int i = 0; i < n; i++) {
+    uint8_t b[6];
+    if (!mpuRead(0x43, b, sizeof(b))) return;
+    for (int k = 0; k < 3; k++) {
+      int16_t v = be16(b + 2 * k);
+      sum[k] += v;
+      if (v < lo[k]) lo[k] = v;
+      if (v > hi[k]) hi[k] = v;
+    }
+    delay(IMU_SAMPLE_MS);
+  }
+  for (int k = 0; k < 3; k++) {
+    if (hi[k] - lo[k] > 3 * GYRO_LSB_PER_DPS) {
+      Serial.println("mpu: moving at boot, gyro bias not calibrated");
+      return;
+    }
+  }
+  for (int k = 0; k < 3; k++) gyroBias[k] = sum[k] / n;
+  Serial.printf("mpu: gyro bias %.2f %.2f %.2f deg/s\n", gyroBias[0] / GYRO_LSB_PER_DPS,
+                gyroBias[1] / GYRO_LSB_PER_DPS, gyroBias[2] / GYRO_LSB_PER_DPS);
+}
+
 bool mpuBegin() {
   for (uint8_t addr : {0x68, 0x69}) {
     mpuAddr = addr;
@@ -133,37 +236,67 @@ bool mpuBegin() {
     Serial.printf("mpu: WHO_AM_I 0x%02x at 0x%02x\n", id, addr);
     mpuWrite(0x6B, 0x80);  // reset
     delay(100);
-    mpuWrite(0x6B, 0x01);  // wake, gyro PLL clock
-    mpuWrite(0x1A, 0x04);  // DLPF ~20 Hz
-    mpuWrite(0x1C, 0x08);  // accel +-4 g
-    if (id != 0x68) mpuWrite(0x1D, 0x04);  // MPU6500+: separate accel DLPF
+    mpuWrite(0x6B, 0x01);                   // wake, gyro PLL clock
+    mpuWrite(0x1A, id == 0x68 ? 0x04 : 0x44);  // DLPF ~20 Hz; MPU6500+: FIFO stops when full, no torn samples
+    mpuWrite(0x19, IMU_SAMPLE_MS - 1);      // 1 kHz / (1 + div) = 50 Hz
+    mpuWrite(0x1B, 0x08);                   // gyro +-500 deg/s
+    mpuWrite(0x1C, 0x08);                   // accel +-4 g
+    if (id != 0x68) mpuWrite(0x1D, 0x04);   // MPU6500+: separate accel DLPF
+    fifoSize = id == 0x68 ? 1024 : 512;
     delay(50);
+    calibrateGyro();
+    mpuWrite(0x23, 0x78);  // FIFO gets accel + gyro: 12 bytes per sample
+    mpuFifoReset();
     return true;
   }
   return false;
 }
 
+void imuSample(const uint8_t* b) {
+  int16_t sa[3] = {be16(b), be16(b + 2), be16(b + 4)};
+  int16_t sg[3];
+  for (int k = 0; k < 3; k++) sg[k] = clamp16((float)be16(b + 6 + 2 * k) - gyroBias[k]);
+  int16_t a[3], g[3];
+  toBuoy(sa, a);
+  toBuoy(sg, g);
+  constexpr float kScale = kG / ACCEL_LSB_PER_G;
+  waves.add(a[0] * kScale, a[1] * kScale, a[2] * kScale);
+  addMotion(a, g);
+}
+
+// Takes every sample the MPU queued since the last call. Its FIFO holds ~40
+// samples (0.8 s), so flash-write stalls in the main loop don't lose any.
+void mpuDrain() {
+  uint8_t c[2];
+  if (!mpuRead(0x72, c, sizeof(c))) {
+    mpuErrors++;
+    return;
+  }
+  size_t count = (c[0] << 8 | c[1]) & 0x1FFF;
+  if (count % 12 || count > fifoSize - 24) {  // torn or about to overflow: start clean
+    mpuFifoReset();
+    fifoResets++;
+    return;
+  }
+  uint8_t buf[120];  // the I2C driver moves at most 128 bytes per read
+  while (count >= 12) {
+    size_t n = min(count, sizeof(buf)) / 12 * 12;
+    if (!mpuRead(0x74, buf, n)) {
+      mpuErrors++;
+      return;
+    }
+    for (size_t i = 0; i < n; i += 12) imuSample(buf + i);
+    count -= n;
+  }
+}
+
 bool mpuAccel(float& x, float& y, float& z) {
   uint8_t b[6];
   if (!mpuRead(0x3B, b, sizeof(b))) return false;
-  constexpr float kScale = kG / 8192.0f;  // LSB/g at +-4 g
-  float sx = (int16_t)(b[0] << 8 | b[1]) * kScale;
-  float sy = (int16_t)(b[2] << 8 | b[3]) * kScale;
-  float sz = (int16_t)(b[4] << 8 | b[5]) * kScale;
-  // Rotate sensor axes into buoy axes (z up), keeping a right-handed frame.
-#if MPU_UP == MPU_UP_PX
-  x = -sz, y = sy, z = sx;
-#elif MPU_UP == MPU_UP_NX
-  x = sz, y = sy, z = -sx;
-#elif MPU_UP == MPU_UP_PY
-  x = sx, y = -sz, z = sy;
-#elif MPU_UP == MPU_UP_NY
-  x = sx, y = sz, z = -sy;
-#elif MPU_UP == MPU_UP_NZ
-  x = sx, y = -sy, z = -sz;
-#else
-  x = sx, y = sy, z = sz;
-#endif
+  int16_t s[3] = {be16(b), be16(b + 2), be16(b + 4)}, o[3];
+  toBuoy(s, o);
+  constexpr float kScale = kG / ACCEL_LSB_PER_G;
+  x = o[0] * kScale, y = o[1] * kScale, z = o[2] * kScale;
   return true;
 }
 
@@ -219,7 +352,7 @@ void begin() {
 #ifdef SIM_SENSORS
   Serial.println("sensors: SIMULATED");
 #else
-  Wire.begin(PIN_I2C_SDA, PIN_I2C_SCL);
+  Wire.begin(PIN_I2C_SDA, PIN_I2C_SCL, 400000);  // both chips do 400 kHz; the MPU is read every 20 ms
   i2cScan();
 
   bmpOk = bmp.begin(0x76) || bmp.begin(0x77);
@@ -254,14 +387,18 @@ void poll() {
   if (now - lastImuAt < IMU_SAMPLE_MS) return;
   lastImuAt = now;
 #ifdef SIM_SENSORS
-  float t = now / 1000.0f;
-  waves.add(noise(0.3f), noise(0.3f), kG + 1.5f * sinf(t * 2 * PI / 6.0f) + noise(0.2f));
+  simImu(now);
 #else
-  if (!mpuOk) return;
-  float ax, ay, az;
-  if (mpuAccel(ax, ay, az)) waves.add(ax, ay, az);
-  else mpuErrors++;
+  if (mpuOk) mpuDrain();
 #endif
+}
+
+bool takeMotion(MotionMsg& out, size_t& n) {
+  if (!motionReady) return false;
+  out = motionOut;
+  n = MOTION_SAMPLES;
+  motionReady = false;
+  return true;
 }
 
 void fill(Record& r) {
@@ -343,8 +480,9 @@ void debugTick() {
   }
   float ax, ay, az;
   if (mpuOk && mpuAccel(ax, ay, az)) {
-    Serial.printf("dbg mpu: accel %.2f %.2f %.2f m/s2 |a| %.2f g, read errors %lu\n", ax, ay, az,
-                  sqrtf(ax * ax + ay * ay + az * az) / kG, (unsigned long)mpuErrors);
+    Serial.printf("dbg mpu: accel %.2f %.2f %.2f m/s2 |a| %.2f g, read errors %lu, fifo resets %lu, samples %lu\n",
+                  ax, ay, az, sqrtf(ax * ax + ay * ay + az * az) / kG, (unsigned long)mpuErrors,
+                  (unsigned long)fifoResets, (unsigned long)imuIndex);
   } else {
     Serial.printf("dbg mpu: %s, read errors %lu\n", mpuOk ? "READ FAILED" : "MISSING", (unsigned long)mpuErrors);
   }
