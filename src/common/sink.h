@@ -47,6 +47,7 @@ class CollectorSink : public MeshNode {
 
   void peerState(const OriginState&) override {}
   bool advertise() override { return started; }
+  bool sink() override { return true; }
 
   // The laptop already has everything below `next`.
   void have(uint32_t origin, uint32_t next) {
@@ -61,6 +62,11 @@ class CollectorSink : public MeshNode {
   void ack(uint32_t origin, uint32_t next) {
     OriginState* s = find(origin);
     if (s) s->acked = max(s->acked, next);
+  }
+
+  // The laptop lost a line: go back to what it has committed.
+  void rewind() {
+    for (size_t i = 0; i < count_; i++) table_[i].first = table_[i].next = table_[i].acked;
   }
 
  private:

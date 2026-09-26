@@ -9,6 +9,9 @@
 #define SUMMARY_INTERVAL_MS  5000UL   // + up to 1 s jitter
 #define DATA_GAP_MS          15UL     // min spacing between DATA frames we send
 #define WANT_TIMEOUT_MS      15000UL  // stop serving a neighbor we stopped hearing from
+#ifndef GAP_HOLD_MS
+#define GAP_HOLD_MS          30000UL  // how long a gap must look unfillable before we skip it
+#endif
 #define NACK_MIN_MS          100UL    // min spacing of gap NACKs we send
 #define MESH_CHANNEL         1
 #define MESH_LONG_RANGE      1        // ESP32-only LR PHY: ~2x range, all nodes must match
@@ -65,7 +68,8 @@ struct __attribute__((packed)) OriginState {
 // ---- Radio messages (ESP-NOW broadcast, max 250 bytes) ---------------------
 #define MSG_MAGIC    0xB7
 #define MSG_VERSION  1
-enum MsgType : uint8_t { MSG_SUMMARY = 1, MSG_DATA = 2 };
+// MSG_SINK_SUMMARY: a collector's summary (same layout); buoys serve it first.
+enum MsgType : uint8_t { MSG_SUMMARY = 1, MSG_DATA = 2, MSG_SINK_SUMMARY = 3 };
 
 struct __attribute__((packed)) MsgHeader {
   uint8_t  magic;

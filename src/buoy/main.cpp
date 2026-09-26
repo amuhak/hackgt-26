@@ -22,13 +22,14 @@ static void printStat() {
   const Mesh::Counters& mc = mesh->counters;
   Serial.printf(
       "STAT up=%lu heap=%u minheap=%u rx=%lu rxdrop=%lu tx=%lu txfail=%lu data=%lu nack=%lu heard=%lu readusmax=%lu "
-      "loops=%lu loopmaxms=%lu\n",
+      "writeusmax=%lu loops=%lu loopmaxms=%lu\n",
       millis() / 1000, ESP.getFreeHeap(), ESP.getMinFreeHeap(), (unsigned long)rs.rxFrames,
       (unsigned long)rs.rxDropped, (unsigned long)rs.txFrames, (unsigned long)rs.txFailed, (unsigned long)mc.dataSent,
-      (unsigned long)mc.nacksSent, (unsigned long)mc.dataHeard, (unsigned long)mc.readUsMax, (unsigned long)loopCount,
+      (unsigned long)mc.nacksSent, (unsigned long)mc.dataHeard, (unsigned long)mc.readUsMax, (unsigned long)store.writeUsMax, (unsigned long)loopCount,
       (unsigned long)loopMaxMs);
   loopCount = loopMaxMs = 0;  // per-window
   mesh->counters.readUsMax = 0;
+  store.writeUsMax = 0;
   store.printStatus(Serial);
 }
 

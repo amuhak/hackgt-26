@@ -37,10 +37,53 @@ String Store::segPath(uint32_t origin, uint32_t seg) {
 
 String Store::metaPath(uint32_t origin) { return dirPath(origin) + "/meta"; }
 
+bool Store::isOpen(uint32_t origin, uint32_t seg) {
+  for (auto& o : open_) {
+    if (o.f && o.origin == origin && o.seg == seg) return true;
+  }
+  return false;
+}
+
+// Returns an open read/write handle for a segment, reusing the least recently
+// used slot. Null if it doesn't exist and `create` is false.
+File* Store::openSeg(uint32_t origin, uint32_t seg, bool create) {
+  OpenSeg* slot = &open_[0];
+  for (auto& o : open_) {
+    if (o.f && o.origin == origin && o.seg == seg) {
+      o.usedAt = ++useClock_;
+      return &o.f;
+    }
+    if (!o.f) slot = &o;
+    else if (slot->f && o.usedAt < slot->usedAt) slot = &o;
+  }
+  String path = segPath(origin, seg);
+  bool exists = fileExists(path);
+  if (!exists && !create) return nullptr;
+  if (slot->f) slot->f.close();
+  slot->f = LittleFS.open(path, exists ? "r+" : "w+");
+  if (!slot->f) return nullptr;
+  slot->origin = origin;
+  slot->seg = seg;
+  slot->usedAt = ++useClock_;
+  return &slot->f;
+}
+
+void Store::closeSegs() {
+  for (auto& o : open_) {
+    if (o.f) o.f.close();
+  }
+}
+
+void Store::removeFile(const String& path) {
+  closeSegs();
+  LittleFS.remove(path);
+}
+
 bool Store::begin(uint32_t selfId, const char* root) {
   self_ = selfId;
   root_ = root;
   count_ = 0;
+  closeSegs();
   if (!LittleFS.begin(true)) {
     Serial.println("store: LittleFS mount failed");
     return false;
@@ -125,7 +168,7 @@ void Store::saveMeta(const OriginState& s) {
 }
 
 void Store::deleteSegments(const OriginState& s, uint32_t fromSeg, uint32_t toSeg) {
-  for (uint32_t seg = fromSeg; seg < toSeg; seg++) LittleFS.remove(segPath(s.origin, seg));
+  for (uint32_t seg = fromSeg; seg < toSeg; seg++) removeFile(segPath(s.origin, seg));
 }
 
 // Drops everything held for this origin and continues from `seq`.
@@ -146,7 +189,7 @@ void Store::prune(OriginState& s) {
   bool changed = false;
   while (s.first < s.next && (s.first / SEGMENT_RECORDS + 1) * SEGMENT_RECORDS <= s.acked) {
     uint32_t seg = s.first / SEGMENT_RECORDS;
-    LittleFS.remove(segPath(s.origin, seg));
+    removeFile(segPath(s.origin, seg));
     s.first = (seg + 1) * SEGMENT_RECORDS;
     changed = true;
   }
@@ -156,7 +199,7 @@ void Store::prune(OriginState& s) {
 // When flash is nearly full, evict the oldest segment of the origin holding
 // the most records.
 void Store::ensureSpace() {
-  while (LittleFS.totalBytes() - LittleFS.usedBytes() < FS_RESERVE_BYTES) {
+  while (LittleFS.usedBytes() + FS_RESERVE_BYTES > LittleFS.totalBytes()) {
     OriginState* victim = nullptr;
     for (size_t i = 0; i < count_; i++) {
       OriginState& s = table_[i];
@@ -164,7 +207,7 @@ void Store::ensureSpace() {
     }
     if (!victim) return;
     uint32_t seg = victim->first / SEGMENT_RECORDS;
-    LittleFS.remove(segPath(victim->origin, seg));
+    removeFile(segPath(victim->origin, seg));
     victim->first = min((seg + 1) * SEGMENT_RECORDS, victim->next);
     saveMeta(*victim);
     Serial.printf("store: flash full, evicted %08lx segment %lu\n", (unsigned long)victim->origin,
@@ -178,17 +221,20 @@ bool Store::write(OriginState& s, const Record* r, size_t n) {
     uint32_t seg = s.next / SEGMENT_RECORDS;
     size_t off = (s.next % SEGMENT_RECORDS) * sizeof(Record);
     size_t batch = min(n, (size_t)(SEGMENT_RECORDS - s.next % SEGMENT_RECORDS));
-    String path = segPath(s.origin, seg);
-
-    bool exists = fileExists(path);
-    if (!exists) ensureSpace();
-    size_t wrote = writeAt(path, exists, off, r, batch);
+    if (!isOpen(s.origin, seg) && !fileExists(segPath(s.origin, seg))) ensureSpace();
+    uint32_t t0 = micros();
+    size_t wrote = writeAt(s.origin, seg, off, r, batch);
     if (wrote != batch * sizeof(Record)) {
       // Flash filled up between segment creations: evict and retry once.
+      closeSegs();
       ensureSpace();
-      wrote = writeAt(path, fileExists(path), off, r, batch);
-      if (wrote != batch * sizeof(Record)) return false;
+      wrote = writeAt(s.origin, seg, off, r, batch);
+      if (wrote != batch * sizeof(Record)) {
+        closeSegs();
+        return false;
+      }
     }
+    writeUsMax = max(writeUsMax, (uint32_t)(micros() - t0));
 
     s.next += batch;
     r += batch;
@@ -199,9 +245,10 @@ bool Store::write(OriginState& s, const Record* r, size_t n) {
 
 // Writes `batch` records at byte offset `off` of a segment file, zero-padding
 // any hole before it. Returns bytes written.
-size_t Store::writeAt(const String& path, bool exists, size_t off, const Record* r, size_t batch) {
-  File f = LittleFS.open(path, exists ? "r+" : "w");
-  if (!f) return 0;
+size_t Store::writeAt(uint32_t origin, uint32_t seg, size_t off, const Record* r, size_t batch) {
+  File* fp = openSeg(origin, seg, true);
+  if (!fp) return 0;
+  File& f = *fp;
   if (f.size() < off) {
     // Records before `first` in this segment are never read; pad them.
     f.seek(f.size());
@@ -214,7 +261,7 @@ size_t Store::writeAt(const String& path, bool exists, size_t off, const Record*
   }
   f.seek(off);
   size_t wrote = f.write(reinterpret_cast<const uint8_t*>(r), batch * sizeof(Record));
-  f.close();
+  f.flush();  // durable at power loss, as a close would be
   return wrote;
 }
 
@@ -247,11 +294,10 @@ size_t Store::read(uint32_t origin, uint32_t seq, Record* out, size_t max) {
   size_t n = min(max, (size_t)(s->next - seq));
   n = min(n, (size_t)(SEGMENT_RECORDS - seq % SEGMENT_RECORDS));
 
-  File f = LittleFS.open(segPath(origin, seq / SEGMENT_RECORDS), "r");
+  File* f = openSeg(origin, seq / SEGMENT_RECORDS, false);
   if (!f) return 0;
-  f.seek((seq % SEGMENT_RECORDS) * sizeof(Record));
-  size_t got = f.read(reinterpret_cast<uint8_t*>(out), n * sizeof(Record)) / sizeof(Record);
-  f.close();
+  f->seek((seq % SEGMENT_RECORDS) * sizeof(Record));
+  size_t got = f->read(reinterpret_cast<uint8_t*>(out), n * sizeof(Record)) / sizeof(Record);
   for (size_t i = 0; i < got; i++) {
     if (out[i].origin != origin || out[i].seq != seq + i) return i;  // corrupt/padding
   }

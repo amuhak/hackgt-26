@@ -5,12 +5,18 @@
 
 On connect it tells the collector what the DB already has, so buoys only send
 what's new, then acks each batch once committed so buoys can free flash.
+
+Only records contiguous with what the DB has are stored and acked. A corrupt
+line or a jump in seq sends REWIND, and the collector resends from the last
+ACKs. A jump that persists after a rewind is real (the mesh evicted those
+records) and is accepted.
 """
 import argparse
 import sqlite3
 import struct
 import sys
 import time
+import zlib
 
 import serial
 
@@ -66,12 +72,29 @@ def send(ser: serial.Serial, line: str) -> None:
     ser.write((line + "\n").encode())
 
 
-def start_session(ser: serial.Serial, db: sqlite3.Connection) -> None:
+REWIND_QUIET_S = 2  # lines already in flight after a REWIND still show the gap
+
+
+def start_session(ser: serial.Serial, db: sqlite3.Connection) -> dict:
+    """Returns origin -> next expected seq."""
     rows = db.execute("SELECT origin, MAX(seq) + 1 FROM readings GROUP BY origin").fetchall()
     for origin, nxt in rows:
         send(ser, f"HAVE {origin} {nxt}")
     send(ser, "START")
     log(f"collector ready; DB has {len(rows)} buoys")
+    return dict(rows)
+
+
+def parse_rec(line: str):
+    """The raw record from a REC line, or None if it's garbled."""
+    parts = line.split()
+    try:
+        raw = bytes.fromhex(parts[1])
+        if len(raw) != 42 or len(parts) != 3 or zlib.crc32(raw) != int(parts[2], 16):
+            return None
+    except (ValueError, IndexError):
+        return None
+    return raw
 
 
 def log(msg: str) -> None:
@@ -83,32 +106,56 @@ def run_session(ser: serial.Serial, db: sqlite3.Connection) -> None:
     # Opening the port usually resets the ESP32, which then says READY. If it
     # didn't reset, it's already running, so announce ourselves right away too.
     time.sleep(1.5)
-    start_session(ser, db)
+    expect = start_session(ser, db)  # origin -> next seq we'll store
     started = time.monotonic()
-    pending: dict[str, int] = {}  # origin -> next seq to ack after commit
+    pending = set()  # origins to ack after commit
+    jump_ok = {}  # origin -> gap start we already rewound for
+    last_rewind = 0.0
     new_rows = 0
     last_flush = time.monotonic()
+
+    def rewind(why: str) -> None:
+        nonlocal last_rewind
+        send(ser, "REWIND")
+        last_rewind = time.monotonic()
+        log(f"rewind: {why}")
+
     while True:
         line = ser.readline().decode(errors="replace").strip()
+        quiet = time.monotonic() - last_rewind > REWIND_QUIET_S
         if line.startswith("READY") and time.monotonic() - started > 3:
-            start_session(ser, db)  # collector rebooted
+            expect = start_session(ser, db)  # collector rebooted
             started = time.monotonic()
         elif line.startswith("REC "):
-            try:
-                row = decode(bytes.fromhex(line[4:]), int(time.time()))
-            except (ValueError, struct.error):
-                continue  # garbled line
+            raw = parse_rec(line)
+            if raw is None:
+                if quiet:
+                    rewind("corrupt line")
+                continue
+            row = decode(raw, int(time.time()))
+            origin, seq = row[0], row[1]
+            e = expect.get(origin, 0)
+            if seq > e:
+                if not quiet:
+                    continue  # in flight from before the rewind
+                if jump_ok.get(origin) != e:
+                    jump_ok[origin] = e
+                    rewind(f"{origin} jumped {e} -> {seq}")
+                    continue
+                log(f"{origin}: records {e}..{seq - 1} no longer exist in the mesh; skipping")
             cur = db.execute(f"INSERT OR IGNORE INTO readings VALUES ({','.join('?' * len(row))})", row)
             new_rows += cur.rowcount
-            pending[row[0]] = max(pending.get(row[0], 0), row[1] + 1)
+            if seq >= e:
+                expect[origin] = seq + 1
+                pending.add(origin)
         elif line.startswith("LOG "):
             log("collector: " + line[4:])
 
         if pending and time.monotonic() - last_flush > 0.5:
             db.commit()
-            for origin, nxt in pending.items():
-                send(ser, f"ACK {origin} {nxt}")
-            counts = ", ".join(f"{o} up to #{n - 1}" for o, n in sorted(pending.items()))
+            for origin in pending:
+                send(ser, f"ACK {origin} {expect[origin]}")
+            counts = ", ".join(f"{o} up to #{expect[o] - 1}" for o in sorted(pending))
             log(f"+{new_rows} new ({counts})")
             pending.clear()
             new_rows = 0

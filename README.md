@@ -36,7 +36,10 @@ python tools/collector.py COM6 --db buoy.db
 - Every 30 s, each buoy stores a record in flash. A record holds water temperature, air temperature, pressure, GPS position and time, and wave statistics: vertical-accel RMS and peak, plus tilt, from 50 Hz IMU sampling.
 - Every ~5 s, each node broadcasts a summary of which records it holds per buoy over ESP-NOW. Neighbors send each other whatever is missing, so every buoy ends up with a copy of every buoy's data.
 - A receiver only accepts the next record in sequence. When it spots a gap, it immediately sends a NACK saying "resend from N".
+- A receiver skips a gap only once no neighbor it has heard in the last 30 s still holds those records (they were evicted everywhere).
 - The collector advertises what the laptop's DB already has, so buoys only send new records. Once the DB commits, the collector's ack spreads through the mesh and buoys delete the delivered data.
+- Buoys serve the collector before lagging buoys, since delivered records get deleted anyway.
+- Serial lines to the laptop carry a CRC. On a bad or missing line, `collector.py` asks the collector to resend from its last ack.
 
 Tunables (sample period, channel, long-range mode) and pins are in `include/proto.h`.
 

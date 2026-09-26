@@ -2,6 +2,7 @@
 // Layout: <root>/<origin hex>/<seq/256>.bin holds records at offset (seq%256)*42,
 // and <root>/<origin hex>/meta holds {first, next, acked}.
 #pragma once
+#include <FS.h>
 #include <Print.h>
 #include "../common/mesh.h"
 
@@ -12,6 +13,7 @@ class Store : public MeshNode {
   // Assigns origin/seq to our own readings and stores them.
   bool appendOwn(Record* r, size_t n = 1);
   void printStatus(Print& out);
+  uint32_t writeUsMax = 0;  // slowest write, for soak tests
 
   size_t states(OriginState* out, size_t max) override;
   bool state(uint32_t origin, OriginState& out) override;
@@ -27,7 +29,11 @@ class Store : public MeshNode {
   String segPath(uint32_t origin, uint32_t seg);
   String metaPath(uint32_t origin);
   bool write(OriginState& s, const Record* r, size_t n);
-  size_t writeAt(const String& path, bool exists, size_t off, const Record* r, size_t batch);
+  size_t writeAt(uint32_t origin, uint32_t seg, size_t off, const Record* r, size_t batch);
+  File* openSeg(uint32_t origin, uint32_t seg, bool create);
+  bool isOpen(uint32_t origin, uint32_t seg);
+  void closeSegs();
+  void removeFile(const String& path);
   void prune(OriginState& s);
   void restartAt(OriginState& s, uint32_t seq);
   void deleteSegments(const OriginState& s, uint32_t fromSeg, uint32_t toSeg);
@@ -38,4 +44,11 @@ class Store : public MeshNode {
   size_t count_ = 0;
   uint32_t self_ = 0;
   String root_;
+  // Open segment files, reused across reads/writes (opening costs ~20 ms).
+  struct OpenSeg {
+    File f;
+    uint32_t origin, seg, usedAt;
+  };
+  OpenSeg open_[2];
+  uint32_t useClock_ = 0;
 };

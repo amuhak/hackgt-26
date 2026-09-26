@@ -14,14 +14,16 @@ void Mesh::fillHeader(MsgHeader& h, MsgType type, uint8_t count) {
   h.sender = self_;
 }
 
-void Mesh::noteAvail(uint32_t origin, uint32_t from) {
+Mesh::Avail* Mesh::noteAvail(uint32_t origin, uint32_t from) {
   for (size_t i = 0; i < availCount_; i++) {
     if (avail_[i].origin == origin) {
       avail_[i].cur = min(avail_[i].cur, from);
-      return;
+      return &avail_[i];
     }
   }
-  if (availCount_ < MAX_ORIGINS) avail_[availCount_++] = {origin, from, UINT32_MAX};
+  if (availCount_ == MAX_ORIGINS) return nullptr;
+  avail_[availCount_] = {origin, from, UINT32_MAX, UINT32_MAX, 0};
+  return &avail_[availCount_++];
 }
 
 uint32_t Mesh::availFrom(uint32_t origin) {
@@ -31,14 +33,22 @@ uint32_t Mesh::availFrom(uint32_t origin) {
   return UINT32_MAX;
 }
 
+// Records [lo, hi) just went out to the neighborhood: nobody waiting at a
+// seq inside that range needs them again.
+void Mesh::skipServed(Want& w, uint32_t lo, uint32_t hi) {
+  if (w.from >= lo && w.from < hi) w.from = hi;
+  if (w.sinkFrom >= lo && w.sinkFrom < hi) w.sinkFrom = hi;
+}
+
 Mesh::Want* Mesh::findWant(uint32_t origin, bool create) {
   Want* freeSlot = nullptr;
   for (auto& w : wants_) {
-    if (w.active && w.origin == origin) return &w;
-    if (!w.active && !freeSlot) freeSlot = &w;
+    bool used = w.active || w.sinkActive;
+    if (used && w.origin == origin) return &w;
+    if (!used && !freeSlot) freeSlot = &w;
   }
   if (!create || !freeSlot) return nullptr;
-  *freeSlot = {origin, 0, 0, false};
+  *freeSlot = {origin, 0, 0, 0, 0, false, false};
   return freeSlot;
 }
 
@@ -51,7 +61,7 @@ bool Mesh::sendSummaryPage(int page) {
   size_t begin = page * SUMMARY_MAX_ENTRIES;
   size_t count = min(n - begin, (size_t)SUMMARY_MAX_ENTRIES);
   SummaryMsg m;
-  fillHeader(m.h, MSG_SUMMARY, count);
+  fillHeader(m.h, node_->sink() ? MSG_SINK_SUMMARY : MSG_SUMMARY, count);
   m.lo = page == 0 ? 0 : scratch_[begin].origin;
   m.hi = (size_t)page == pages - 1 ? UINT32_MAX : scratch_[begin + count].origin - 1;
   memcpy(m.e, scratch_ + begin, count * sizeof(OriginState));
@@ -63,13 +73,13 @@ bool Mesh::sendSummaryPage(int page) {
 // rather than at our next full summary.
 void Mesh::sendNack(uint32_t origin) {
   SummaryMsg m;
-  fillHeader(m.h, MSG_SUMMARY, 1);
+  fillHeader(m.h, node_->sink() ? MSG_SINK_SUMMARY : MSG_SUMMARY, 1);
   m.lo = m.hi = origin;
   if (!node_->state(origin, m.e[0])) return;
   if (radio_->send(&m, offsetof(SummaryMsg, e) + sizeof(OriginState))) counters.nacksSent++;
 }
 
-void Mesh::onSummary(const SummaryMsg& m, uint32_t now) {
+void Mesh::onSummary(const SummaryMsg& m, uint32_t now, bool fromSink) {
   for (size_t i = 0; i < m.h.count; i++) {
     const OriginState& e = m.e[i];
     node_->peerState(e);
@@ -94,9 +104,15 @@ void Mesh::onSummary(const SummaryMsg& m, uint32_t now) {
     if (from >= s.next) continue;
     Want* w = findWant(s.origin, true);
     if (!w) continue;
-    if (!w->active || from < w->from) w->from = from;
-    w->active = true;
-    w->heardAt = now;
+    if (fromSink) {
+      w->sinkFrom = from;  // the collector's position is exact
+      w->sinkActive = true;
+      w->sinkHeardAt = now;
+    } else {
+      if (!w->active || from < w->from) w->from = from;
+      w->active = true;
+      w->heardAt = now;
+    }
   }
 }
 
@@ -110,19 +126,33 @@ void Mesh::onData(const DataMsg& m, uint32_t now) {
   counters.dataHeard++;
   // Skip a gap only if no neighbor we've heard lately can fill it, not just
   // this sender (which may have evicted records others still hold).
-  noteAvail(origin, m.first);
-  node_->ingest(m.r, m.h.count, min(m.first, availFrom(origin)));
+  // Also hold off for GAP_HOLD_MS: a neighbor that still has the records may
+  // just not have spoken yet (e.g. it is still booting).
+  Avail* a = noteAvail(origin, m.first);
+  uint32_t floor = min(m.first, availFrom(origin));
+  OriginState s = {};
+  node_->state(origin, s);
+  bool holding = false;
+  if (floor > s.next && a) {
+    if (a->gapNext != s.next) {
+      a->gapNext = s.next;
+      a->gapSince = now;
+    }
+    holding = now - a->gapSince < GAP_HOLD_MS;
+    if (holding) floor = 0;
+  }
+  node_->ingest(m.r, m.h.count, floor);
 
-  // Still behind this frame means we missed one before it: ask for a resend.
-  OriginState s;
-  if (node_->advertise() && node_->state(origin, s) && s.next < seq && now - lastNackAt_ >= NACK_MIN_MS) {
+  // Still behind this frame means we missed one before it: ask for a resend
+  // (unless nobody we hear has it).
+  if (!holding && node_->advertise() && node_->state(origin, s) && s.next < seq && now - lastNackAt_ >= NACK_MIN_MS) {
     nackPending_ = true;
     nackOrigin_ = origin;
   }
 
   // Someone else just served this range to the neighborhood; skip past it.
   Want* w = findWant(origin, false);
-  if (w && w->from >= seq && w->from < seq + m.h.count) w->from = seq + m.h.count;
+  if (w) skipServed(*w, seq, seq + m.h.count);
 }
 
 void Mesh::receive(const uint8_t* data, size_t len, uint32_t now) {
@@ -131,11 +161,11 @@ void Mesh::receive(const uint8_t* data, size_t len, uint32_t now) {
   memcpy(&h, data, sizeof(h));
   if (h.magic != MSG_MAGIC || h.version != MSG_VERSION || h.sender == self_) return;
 
-  if (h.type == MSG_SUMMARY && h.count <= SUMMARY_MAX_ENTRIES &&
+  if ((h.type == MSG_SUMMARY || h.type == MSG_SINK_SUMMARY) && h.count <= SUMMARY_MAX_ENTRIES &&
       len >= offsetof(SummaryMsg, e) + h.count * sizeof(OriginState)) {
     SummaryMsg m;
     memcpy(&m, data, min(len, sizeof(m)));
-    onSummary(m, now);
+    onSummary(m, now, h.type == MSG_SINK_SUMMARY);
   } else if (h.type == MSG_DATA && h.count <= DATA_MAX_RECORDS &&
              len >= offsetof(DataMsg, r) + h.count * sizeof(Record)) {
     DataMsg m;
@@ -150,26 +180,35 @@ void Mesh::serveData(uint32_t now) {
   for (size_t step = 0; step < MAX_ORIGINS; step++) {
     size_t idx = (wantCursor_ + step) % MAX_ORIGINS;
     Want& w = wants_[idx];
-    if (!w.active) continue;
+    if (!w.active && !w.sinkActive) continue;
     OriginState s;
-    if (now - w.heardAt > WANT_TIMEOUT_MS || !node_->state(w.origin, s)) {
-      w.active = false;
+    if (!node_->state(w.origin, s)) {
+      w.active = w.sinkActive = false;
       continue;
     }
-    uint32_t from = max(w.from, max(s.first, s.acked));
+    if (now - w.heardAt > WANT_TIMEOUT_MS) w.active = false;
+    if (now - w.sinkHeardAt > WANT_TIMEOUT_MS) w.sinkActive = false;
+    uint32_t floor = max(s.first, s.acked);  // oldest we'll ever send
+    bool forSink = w.sinkActive && max(w.sinkFrom, floor) < s.next;
+    if (!forSink) w.sinkActive = false;
+    if (!forSink && !w.active) continue;
+    uint32_t from = max(forSink ? w.sinkFrom : w.from, floor);
     DataMsg m;
     uint32_t t0 = micros();
     size_t n = from < s.next ? node_->read(w.origin, from, m.r, DATA_MAX_RECORDS) : 0;
     counters.readUsMax = max(counters.readUsMax, (uint32_t)(micros() - t0));
     if (n == 0) {
-      w.active = false;
+      if (forSink) w.sinkActive = false;
+      else w.active = false;
       continue;
     }
     fillHeader(m.h, MSG_DATA, n);
-    m.first = max(s.first, s.acked);  // oldest we'll ever send
+    m.first = floor;
     if (radio_->send(&m, offsetof(DataMsg, r) + n * sizeof(Record))) {
       counters.dataSent++;
-      w.from = from + n;
+      if (forSink) w.sinkFrom = from + n;
+      else w.from = from + n;
+      skipServed(w, from, from + n);
       lastDataAt_ = now;
       wantCursor_ = idx + 1;  // round-robin across origins
     }

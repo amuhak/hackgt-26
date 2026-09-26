@@ -2,21 +2,31 @@
 //
 // Serial protocol (921600 baud, newline-terminated):
 //   -> laptop  READY <self hex>               until START is received
-//   -> laptop  REC <84 hex chars>             one raw Record
+//   -> laptop  REC <84 hex chars> <crc32 hex> one raw Record, CRC-32 (zlib) of its bytes
 //   -> laptop  LOG <text>
 //   <- laptop  HAVE <origin hex> <next>       laptop already has seq < next
 //   <- laptop  START                          begin advertising
 //   <- laptop  ACK <origin hex> <next>        committed to the DB; buoys may prune
+//   <- laptop  REWIND                         a REC line was lost: resend from the last ACKs
 #include <Arduino.h>
 
 #include "../common/mesh.h"
 #include "../common/sink.h"
 
+static uint32_t crc32(const uint8_t* p, size_t n) {
+  uint32_t c = 0xFFFFFFFF;
+  while (n--) {
+    c ^= *p++;
+    for (int k = 0; k < 8; k++) c = (c >> 1) ^ (0xEDB88320 & -(c & 1));
+  }
+  return ~c;
+}
+
 static void emit(const Record& r) {
   Serial.print("REC ");
   const uint8_t* b = reinterpret_cast<const uint8_t*>(&r);
   for (size_t k = 0; k < sizeof(Record); k++) Serial.printf("%02x", b[k]);
-  Serial.print('\n');
+  Serial.printf(" %08lx\n", (unsigned long)crc32(b, sizeof(Record)));
 }
 
 static CollectorSink sink(emit);
@@ -35,6 +45,9 @@ static void handleLine(char* s) {
     uint32_t origin = strtoul(originHex, nullptr, 16);
     if (!strcmp(cmd, "HAVE")) sink.have(origin, next);
     else if (!strcmp(cmd, "ACK")) sink.ack(origin, next);
+  } else if (!strcmp(s, "REWIND")) {
+    sink.rewind();
+    Serial.println("LOG rewound to last ACKs");
   } else if (!strcmp(s, "START")) {
     sink.started = true;
     Serial.println("LOG started");

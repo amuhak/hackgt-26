@@ -20,6 +20,8 @@ class MeshNode {
   virtual void peerState(const OriginState& s) = 0;
   // False keeps this node silent (collector before the laptop is attached).
   virtual bool advertise() { return true; }
+  // True for the collector: neighbors serve it before other buoys.
+  virtual bool sink() { return false; }
 };
 
 // Broadcast transport. ESP-NOW on hardware, simulated in the mesh test.
@@ -44,28 +46,33 @@ class Mesh {
 
  private:
   // A neighbor is missing records of `origin` from `from` onward; we serve
-  // them in DATA bursts until caught up or the neighbor goes quiet.
+  // them in DATA bursts until caught up or the neighbor goes quiet. A
+  // collector is tracked separately and served first: once it has records
+  // they get acked and no buoy needs them any more.
   struct Want {
     uint32_t origin;
-    uint32_t from;
-    uint32_t heardAt;
-    bool active;
+    uint32_t from, heardAt;
+    uint32_t sinkFrom, sinkHeardAt;
+    bool active, sinkActive;
   };
 
   // Oldest seq any recently heard neighbor can still send, per origin, as a
   // min over two rotating windows so stale values age out.
+  // gapNext/gapSince: when we first saw our `next` look unfillable.
   struct Avail {
     uint32_t origin;
     uint32_t cur, prev;
+    uint32_t gapNext, gapSince;
   };
 
-  void noteAvail(uint32_t origin, uint32_t from);
+  Avail* noteAvail(uint32_t origin, uint32_t from);
   uint32_t availFrom(uint32_t origin);
   void fillHeader(MsgHeader& h, MsgType type, uint8_t count);
   Want* findWant(uint32_t origin, bool create);
+  void skipServed(Want& w, uint32_t lo, uint32_t hi);
   bool sendSummaryPage(int page);
   void sendNack(uint32_t origin);
-  void onSummary(const SummaryMsg& m, uint32_t now);
+  void onSummary(const SummaryMsg& m, uint32_t now, bool fromSink);
   void onData(const DataMsg& m, uint32_t now);
   void serveData(uint32_t now);
 

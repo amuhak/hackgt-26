@@ -6,6 +6,7 @@
 #include <LittleFS.h>
 
 #include <map>
+#include <new>
 #include <set>
 #include <vector>
 
@@ -271,6 +272,38 @@ void setup() {
   checkReload(1, roots[1]);
   checkReload(2, roots[2]);
   checkReload(3, roots[3]);
+
+  // Seen on hardware: the collector skipped records that a neighbor still
+  // held, because that neighbor was still booting when the gap showed up.
+  Serial.println("phase 6: C's flash is wiped; the collector first hears only C, B (holding C's old records) boots 10 s late");
+  alive[kCol] = false;
+  alive[3] = false;
+  generating = true;
+  run(20000);
+  generating = false;
+  run(20000);
+  uint32_t cNext = ownNext(2);
+  stores[2].~Store();
+  new (&stores[2]) Store();
+  stores[2].begin(kIds[2], "/s2w");
+  run(12000);
+  check(ownNext(2) == cNext, "wiped C resumed its seq from B (%lu, want %lu)", (unsigned long)ownNext(2),
+        (unsigned long)cNext);
+  alive[1] = false;
+  connect(3, kCol, false);
+  connect(2, kCol, true);
+  delete meshes[kCol];  // collector boots fresh
+  meshes[kCol] = new Mesh(&sink, kIds[kCol], &radios[kCol]);
+  alive[kCol] = true;
+  generating = true;
+  run(10000);
+  alive[1] = true;
+  connect(1, kCol, true);
+  run(20000);
+  generating = false;
+  run(60000);
+  printAll();
+  checkCollected();
   LittleFS.format();  // don't leave test data behind for the buoy firmware
 
   Serial.printf("SIM DONE pass=%d fail=%d (virtual %lus in %lus real)\n", passes, fails,
