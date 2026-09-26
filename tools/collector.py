@@ -110,8 +110,8 @@ def main() -> None:
                 db.commit()
                 for origin, nxt in pending.items():
                     send(ser, f"ACK {origin} {nxt}")
-                counts = ", ".join(f"{o}→{n}" for o, n in sorted(pending.items()))
-                print(f"{time.strftime('%H:%M:%S')} +{new_rows} new  ({counts})")
+                counts = ", ".join(f"{o} up to #{n - 1}" for o, n in sorted(pending.items()))
+                print(f"{time.strftime('%H:%M:%S')} +{new_rows} new ({counts})")
                 pending.clear()
                 new_rows = 0
                 last_flush = time.monotonic()
