@@ -56,4 +56,4 @@ Tunables (sample period, channel, long-range mode) and pins are in `include/prot
 
 - Long-range mode (`MESH_LONG_RANGE`) roughly doubles range, but every node must run the same setting.
 - The mesh only runs between ESP32s.
-- Flash holds about 45k records. That is roughly 1.5 days of undelivered data for 10 buoys; after that the oldest records are evicted.
+- Flash holds about 35k records (measured). Every buoy keeps a copy of every buoy's data, so that is shared across the fleet: about 4 days with the laptop offline for 3 buoys at 30 s, 29 h for 10 buoys, 8 h for 3 buoys at the 2 s demo rate. After that the oldest records are evicted.
