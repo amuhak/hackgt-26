@@ -1,7 +1,8 @@
 // Browser voice agent on xAI's realtime API (grok-voice). The backend mints a
 // short-lived token; audio goes straight between the browser and xAI. Tools run
 // here: data tools call our backend, UI tools drive the store.
-import { MAP_METRICS, METRICS, POS_LABEL, ago } from "../metrics";
+import { MAP_METRICS, METRICS, POS_LABEL, ago, type MetricKey } from "../metrics";
+import { openChart, showProblem } from "../problem";
 import { logVoice, useStore } from "../store";
 import type { NodeInfo } from "../types";
 import { onAlert } from "../ws";
@@ -21,6 +22,8 @@ How to talk:
 - Wave RMS is wave energy in g: under 0.02 g is calm, over 0.1 g is rough. Tilt is degrees from level. Yaw is relative, since there's no compass.
 - If data comes from simulated sensors, say so when relevant.
 - When asked to show, open, or look at a buoy, call show_buoy. For "go back" or "show everything", call show_map.
+- When the user is done ("bye", "thanks, that's all", "stop listening"), call end_session.
+- When asked if anything is wrong: call get_recent_alerts and get_fleet_status. If there's a problem, call show_problem for the most serious alert, or show_chart for something you found in the data yourself, then say what happened in one or two sentences. If nothing is wrong, say so. Info-level alerts (back online, GPS fix) are not problems on their own.
 - A user message starting with "ALERT:" is from the monitoring system, not the user. Announce it in one calm sentence and offer to show the buoy.`;
 
 const buoyParam = { buoy: { type: "string", description: 'Buoy name or id, e.g. "#1", "1", or "f4e618b4"' } };
@@ -65,6 +68,34 @@ const TOOLS = [
     name: "set_theme",
     description: "Switch the UI between dark and light mode.",
     parameters: { type: "object", properties: { mode: { type: "string", enum: ["dark", "light"] } }, required: ["mode"] },
+  },
+  {
+    type: "function",
+    name: "show_problem",
+    description: "Open the buoy's history chart for an alert, with the moment it happened boxed in red.",
+    parameters: { type: "object", properties: { alert_id: { type: "string", description: "id from get_recent_alerts" } }, required: ["alert_id"] },
+  },
+  {
+    type: "function",
+    name: "show_chart",
+    description: "Open a buoy's history chart for one metric and box a time span on it, e.g. a pressure drop found with get_trend.",
+    parameters: {
+      type: "object",
+      properties: {
+        ...buoyParam,
+        metric: { type: "string", enum: ["water_c", "air_c", "pressure_hpa", "wave_rms_g", "tilt"] },
+        from_minutes_ago: { type: "number", description: "Start of the span to box" },
+        to_minutes_ago: { type: "number", description: "End of the span; 0 is now. Omit to box a single moment." },
+        label: { type: "string", description: "Two or three words shown on the box" },
+      },
+      required: ["buoy", "metric", "from_minutes_ago", "label"],
+    },
+  },
+  {
+    type: "function",
+    name: "end_session",
+    description: 'End this voice session and turn the microphone off, when the user is done ("bye", "that\'s all", "stop listening").',
+    parameters: { type: "object", properties: {} },
   },
 ];
 
@@ -130,7 +161,23 @@ async function runTool(name: string, a: Record<string, unknown>): Promise<unknow
       return api(`/api/summary?node=${n.id}&metric=${a.metric}&minutes=${Number(a.minutes) || 60}`);
     }
     case "get_recent_alerts":
-      return { alerts: st.alerts.slice(-10).map((x) => ({ title: x.title, detail: x.detail, ago: ago(Date.now() / 1000 - x.t) })) };
+      return {
+        alerts: st.alerts.slice(-15).map((x) => ({ id: x.id, level: x.level, buoy: x.name, title: x.title, detail: x.detail, ago: ago(Date.now() / 1000 - x.t) })),
+      };
+    case "show_problem": {
+      const al = st.alerts.find((x) => x.id === a.alert_id);
+      if (!al) return { error: `No alert "${a.alert_id}". Call get_recent_alerts for ids.` };
+      return { ok: true, buoy: al.name, ...showProblem(al) };
+    }
+    case "show_chart": {
+      const n = findBuoy(String(a.buoy));
+      if (!n) return { error: `No buoy "${a.buoy}"` };
+      const now = Date.now() / 1000;
+      const from = now - Number(a.from_minutes_ago) * 60;
+      const to = a.to_minutes_ago == null ? from : now - Number(a.to_minutes_ago) * 60;
+      openChart({ node: n.id, metric: a.metric as MetricKey, from: Math.min(from, to), to: Math.max(from, to), label: String(a.label ?? "") });
+      return { ok: true, showing: n.name };
+    }
     case "show_buoy": {
       const n = findBuoy(String(a.buoy));
       if (!n) return { error: `No buoy "${a.buoy}"` };
@@ -150,6 +197,8 @@ async function runTool(name: string, a: Record<string, unknown>): Promise<unknow
     case "set_theme":
       st.setTheme(a.mode === "light" ? "light" : "dark");
       return { ok: true };
+    case "end_session":
+      return { ok: true, instruction: "Say a goodbye of a few words. The session closes when you finish speaking." };
   }
   return { error: `unknown tool ${name}` };
 }
@@ -172,6 +221,7 @@ class VoiceAgent {
   private needResponse = false;
   private pendingAlerts: string[] = [];
   private stopping = false;
+  private ending = 0; // failsafe timer once end_session is called
   private unsub: (() => void) | null = null;
 
   async start() {
@@ -234,6 +284,8 @@ class VoiceAgent {
   }
 
   stop() {
+    clearTimeout(this.ending);
+    this.ending = 0;
     this.stopping = true;
     this.ws?.close();
     this.teardown();
@@ -309,6 +361,7 @@ class VoiceAgent {
           /* leave empty */
         }
         logVoice("tool", `${e.name}(${Object.values(a).join(", ")})`);
+        if (e.name === "end_session" && !this.ending) this.ending = window.setTimeout(() => this.stop(), 10000);
         this.needResponse = true;
         runTool(e.name, a)
           .catch((err) => ({ error: String(err) }))
@@ -332,6 +385,11 @@ class VoiceAgent {
               this.send({ type: "response.create" });
             }
           }, 50);
+        } else if (this.ending) {
+          // The goodbye is out; hang up once it has finished playing.
+          const quiet = () => (this.sources.length ? setTimeout(quiet, 100) : this.stop());
+          quiet();
+          return;
         } else if (!this.sources.length) set({ voiceStatus: "listening" });
         this.flushAlerts();
         break;

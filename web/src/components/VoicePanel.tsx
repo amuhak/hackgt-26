@@ -16,6 +16,7 @@ export function VoicePanel() {
   const status = useStore((s) => s.voiceStatus);
   const error = useStore((s) => s.voiceError);
   const log = useStore((s) => s.voiceLog);
+  const onNode = useStore((s) => !!s.selected);
   const [text, setText] = useState("");
   const bars = useRef<HTMLDivElement>(null);
   const logEl = useRef<HTMLDivElement>(null);
@@ -48,7 +49,7 @@ export function VoicePanel() {
   };
 
   return (
-    <div className="voice">
+    <div className={`voice ${onNode ? "on-node" : ""}`}>
       <div className="voice-top">
         <Microphone size={20} style={{ color: "var(--accent)" }} />
         <div className="voice-state">

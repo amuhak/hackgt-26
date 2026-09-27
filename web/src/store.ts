@@ -7,6 +7,9 @@ export type VoiceStatus = "off" | "connecting" | "listening" | "thinking" | "spe
 
 type Theme = "dark" | "light";
 
+/** A history chart to open on a buoy page, with a box drawn around [from, to]. */
+export type ChartFocus = { node: string; metric: MetricKey; minutes: number; from: number; to: number; label: string; at: number };
+
 type State = {
   nodes: Record<string, NodeInfo>;
   collector: Collector | null;
@@ -20,6 +23,7 @@ type State = {
   hovered: string | null;
   placing: boolean;
   focusRequest: { id: string | null; at: number } | null; // map fly-to / fit requests
+  chartFocus: ChartFocus | null;
   voiceOpen: boolean;
   voiceStatus: VoiceStatus;
   voiceError: string | null;
@@ -62,6 +66,7 @@ export const useStore = create<State>((set) => ({
   hovered: null,
   placing: false,
   focusRequest: null,
+  chartFocus: null,
   voiceOpen: false,
   voiceStatus: "off",
   voiceError: null,
@@ -79,7 +84,7 @@ export const useStore = create<State>((set) => ({
   openNode: (id) => {
     const hash = id ? `#/node/${id}` : "#/";
     if (location.hash !== hash) history.pushState(null, "", hash);
-    set({ selected: id, hovered: null });
+    set((s) => ({ selected: id, hovered: null, chartFocus: s.chartFocus?.node === id ? s.chartFocus : null }));
   },
   setHovered: (hovered) => set({ hovered }),
   setPlacing: (placing) => set({ placing }),
@@ -87,7 +92,12 @@ export const useStore = create<State>((set) => ({
   dismissToast: (id) => set((s) => ({ toasts: s.toasts.filter((t) => t.id !== id) })),
 }));
 
-window.addEventListener("popstate", () => useStore.setState({ selected: selectedFromHash() }));
+window.addEventListener("popstate", () =>
+  useStore.setState((s) => {
+    const selected = selectedFromHash();
+    return { selected, chartFocus: s.chartFocus?.node === selected ? s.chartFocus : null };
+  }),
+);
 
 export function pushAlert(a: Alert) {
   useStore.setState((s) => ({ alerts: [...s.alerts, a].slice(-100), toasts: [...s.toasts, a].slice(-4) }));

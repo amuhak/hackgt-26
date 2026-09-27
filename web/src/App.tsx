@@ -7,6 +7,7 @@ import { Dashboard } from "./components/Dashboard";
 import { NodePage } from "./components/NodePage";
 import { VoicePanel } from "./components/VoicePanel";
 import { agent } from "./voice/agent";
+import { showProblem } from "./problem";
 
 export function App() {
   const theme = useStore((s) => s.theme);
@@ -95,14 +96,10 @@ function Header() {
 
 function Toasts() {
   const toasts = useStore((s) => s.toasts);
-  const open = (id: string) => {
-    useStore.getState().focus(id);
-    setTimeout(() => useStore.getState().openNode(id), 450);
-  };
   return (
     <div className="toasts">
       {toasts.map((t) => (
-        <div key={t.id} className={`toast ${t.level}`} onClick={() => open(t.node)} style={{ cursor: "pointer" }}>
+        <div key={t.id} className={`toast ${t.level}`} onClick={() => showProblem(t)} style={{ cursor: "pointer" }}>
           <div className="bar" />
           <div>
             <div className="tt">{t.title}</div>

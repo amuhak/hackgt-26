@@ -209,13 +209,13 @@ def collector_json(now):
 
 # ---- alerts ----------------------------------------------------------------
 
-def raise_alert(node, kind, level, title, detail="", every=0.0):
+def raise_alert(node, kind, level, title, detail="", every=0.0, **extra):
     now = time.time()
     if every and now - node.throttle.get(kind, 0) < every:
         return None
     node.throttle[kind] = now
     a = {"id": f"{node.id}-{kind}-{int(now * 1000)}", "t": now, "level": level, "node": node.id,
-         "name": node.name, "kind": kind, "title": title, "detail": detail}
+         "name": node.name, "kind": kind, "title": title, "detail": detail, **extra}
     alerts.append(a)
     pending_events.append({"type": "alert", "alert": a})
     return a
@@ -274,7 +274,7 @@ def status_alerts(now):
         s = n.status(now)
         if n.status_was in ("online",) and s in ("stale", "offline"):
             raise_alert(n, "offline", "critical", f"Buoy {n.name} went silent",
-                        f"Last heard {now - n.latest['received_at']:.0f} s ago")
+                        f"Last heard {now - n.latest['received_at']:.0f} s ago", since=n.latest["received_at"])
             pending_nodes.add(n.id)
         elif n.status_was in ("stale", "offline") and s == "online":
             raise_alert(n, "offline", "info", f"Buoy {n.name} is back online")
@@ -504,12 +504,16 @@ def summary(node: str, metric: str = "water_c", minutes: float = 60):
     if not pts:
         return {"node": n.name, "metric": metric, "minutes": minutes, "count": 0}
     vals = [v for _, v in pts]
+    now = time.time()
+    t_min = min(pts, key=lambda p: p[1])[0]
+    t_max = max(pts, key=lambda p: p[1])[0]
     span_h = (pts[-1][0] - pts[0][0]) / 3600
     return {"node": n.name, "metric": metric, "minutes": minutes, "count": len(vals),
             "first": vals[0], "last": vals[-1], "min": min(vals), "max": max(vals),
             "mean": round(statistics.fmean(vals), 3), "change": round(vals[-1] - vals[0], 3),
             "change_per_hour": round((vals[-1] - vals[0]) / span_h, 3) if span_h > 0.01 else None,
-            "covers_minutes": round(span_h * 60, 1)}
+            "covers_minutes": round(span_h * 60, 1),
+            "min_minutes_ago": round((now - t_min) / 60, 1), "max_minutes_ago": round((now - t_max) / 60, 1)}
 
 
 @app.get("/api/alerts")

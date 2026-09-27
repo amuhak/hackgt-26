@@ -60,6 +60,7 @@ export type Alert = {
   kind: string;
   title: string;
   detail: string;
+  since?: number; // "went silent": when it was last heard
 };
 
 export const F = { BMP: 1, IMU: 2, WATER: 4, GPS_FIX: 8, GPS_TIME: 16, SIM: 128 };

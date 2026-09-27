@@ -1,5 +1,5 @@
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState, type MutableRefObject } from "react";
-import { ArrowLeft, Radio } from "@carbon/icons-react";
+import { ArrowLeft, Close, Radio } from "@carbon/icons-react";
 import { useStore } from "../store";
 import { METRICS, POS_LABEL, STATUS_LABEL, ago, duration, fmt, type MetricKey } from "../metrics";
 import { hasLive, recent } from "../motion";
@@ -12,7 +12,7 @@ const RANGES = [
   { label: "1 h", m: 60 },
   { label: "6 h", m: 360 },
   { label: "24 h", m: 1440 },
-];
+]; // keep in step with problem.ts
 const HIST: MetricKey[] = ["water_c", "air_c", "pressure_hpa", "wave_rms_g", "tilt"];
 const XYZ = ["#fa4d56", "#42be65", "#08bdba"];
 
@@ -187,12 +187,27 @@ function HistorySection({ id, n }: { id: string; n: NodeInfo }) {
   const [range, setRange] = useState(60);
   const [metric, setMetric] = useState<MetricKey>("water_c");
   const [data, setData] = useState<History | null>(null);
+  const [now, setNow] = useState(() => Date.now() / 1000);
+  const box = useStore((s) => (s.chartFocus?.node === id ? s.chartFocus : null));
+  const el = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!box) return;
+    setMetric(box.metric === "wave_peak_g" ? "wave_rms_g" : HIST.includes(box.metric) ? box.metric : "water_c");
+    setRange(box.minutes);
+    // Wait for the page to lay out (it may have just opened) before scrolling to the chart.
+    const tm = setTimeout(() => el.current?.scrollIntoView({ behavior: "smooth", block: "center" }), 300);
+    return () => clearTimeout(tm);
+  }, [box?.at]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => {
     let dead = false;
     const load = () =>
       fetch(`/api/nodes/${id}/history?minutes=${range}`)
         .then((r) => r.json())
-        .then((d) => !dead && setData(d))
+        .then((d) => {
+          if (dead) return;
+          setData(d);
+          setNow(Date.now() / 1000);
+        })
         .catch(() => {});
     load();
     const iv = setInterval(load, Math.max(5000, n.interval_s * 1000));
@@ -215,9 +230,14 @@ function HistorySection({ id, n }: { id: string; n: NodeInfo }) {
           ]
         : [{ label: METRICS[metric].short, color: "#08bdba", values: data?.[metric] ?? [] }];
   return (
-    <div className="section">
+    <div className="section" ref={el}>
       <div className="section-head">
         <span className="section-title">History</span>
+        {box && (
+          <button className="tag bad box-tag" title="Clear highlight" onClick={() => useStore.setState({ chartFocus: null })}>
+            {box.label} <Close size={12} />
+          </button>
+        )}
         <div className="seg">
           {RANGES.map((r) => (
             <button key={r.m} className={range === r.m ? "on" : ""} onClick={() => setRange(r.m)}>
@@ -236,7 +256,15 @@ function HistorySection({ id, n }: { id: string; n: NodeInfo }) {
         </div>
       </div>
       <div className="chart-box">
-        <LineChart t={data?.t ?? []} series={series} unit={METRICS[metric].unit} digits={METRICS[metric].digits} height={200} />
+        <LineChart
+          t={data?.t ?? []}
+          series={series}
+          unit={METRICS[metric].unit}
+          digits={METRICS[metric].digits}
+          height={200}
+          tRange={[now - range * 60, now]}
+          highlight={box}
+        />
       </div>
     </div>
   );

@@ -3,6 +3,7 @@ import { useStore } from "../store";
 import { MAP_METRICS, METRICS, RAMP_CSS, STATUS_LABEL, ago, fmt, fmtMetric, metricColor, type MetricKey } from "../metrics";
 import type { NodeInfo } from "../types";
 import { Sparkline } from "./charts";
+import { showProblem } from "../problem";
 
 export function Dashboard({ faded }: { faded: boolean }) {
   const nodes = useStore((s) => s.nodes);
@@ -109,7 +110,7 @@ export function Dashboard({ faded }: { faded: boolean }) {
           <div className="alert-feed">
             {alerts.length === 0 && <div className="empty">All quiet.</div>}
             {[...alerts].reverse().slice(0, 12).map((a) => (
-              <div key={a.id} className={`alert-item ${a.level}`}>
+              <div key={a.id} className={`alert-item ${a.level}`} onClick={() => showProblem(a)}>
                 <div className="bar" />
                 <div>
                   <div className="at">{a.title}</div>

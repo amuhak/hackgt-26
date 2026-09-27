@@ -25,6 +25,8 @@ type ChartOpts = {
   digits?: number;
   timeFmt?: (t: number) => string;
   zeroLine?: boolean;
+  tRange?: [number, number]; // fixed x window, so an outage shows as empty space
+  highlight?: { from: number; to: number; label: string } | null;
 };
 
 function cssVar(el: Element, name: string) {
@@ -60,7 +62,8 @@ export function drawChart(canvas: HTMLCanvasElement, o: ChartOpts) {
   if (hi - lo < 1e-9) { hi += 0.5; lo -= 0.5; }
   const padY = (hi - lo) * 0.08;
   lo -= padY; hi += padY;
-  const t0 = o.t[0], t1 = o.t[o.t.length - 1];
+  const t0 = o.tRange ? Math.min(o.tRange[0], o.t[0]) : o.t[0];
+  const t1 = o.tRange ? Math.max(o.tRange[1], o.t[o.t.length - 1]) : o.t[o.t.length - 1];
   const X = (t: number) => padL + ((t - t0) / (t1 - t0 || 1)) * pw;
   const Y = (v: number) => padT + (1 - (v - lo) / (hi - lo)) * ph;
 
@@ -83,6 +86,26 @@ export function drawChart(canvas: HTMLCanvasElement, o: ChartOpts) {
   c.textAlign = "right";
   c.fillText(tf(t1), w - padR, h - 5);
 
+  // Problem box: shaded behind the lines, outlined and labelled on top.
+  let box: [number, number] | null = null;
+  const err = cssVar(canvas, "--error");
+  if (o.highlight) {
+    let x0 = Math.max(padL, X(o.highlight.from)), x1 = Math.min(w - padR, X(o.highlight.to));
+    if (x1 - x0 < 12) {
+      const m = Math.min(Math.max((x0 + x1) / 2, padL + 6), w - padR - 6);
+      x0 = m - 6;
+      x1 = m + 6;
+    }
+    box = [x0, x1];
+    c.fillStyle = err;
+    c.globalAlpha = 0.13;
+    c.fillRect(x0, padT, x1 - x0, ph);
+    c.globalAlpha = 1;
+  }
+
+  // Break the line across gaps (buoy silent), rather than drawing a straight bridge.
+  const dts = o.t.slice(1).map((t, i) => t - o.t[i]).sort((a, b) => a - b);
+  const gap = Math.max(60, 5 * (dts[dts.length >> 1] ?? 0));
   for (const s of o.series) {
     c.strokeStyle = s.color;
     c.lineWidth = 1.5;
@@ -90,12 +113,27 @@ export function drawChart(canvas: HTMLCanvasElement, o: ChartOpts) {
     let pen = false;
     for (let i = 0; i < o.t.length; i++) {
       const v = s.values[i];
-      if (v == null) { pen = false; continue; }
+      if (v == null || (i > 0 && o.t[i] - o.t[i - 1] > gap)) pen = false;
+      if (v == null) continue;
       const x = X(o.t[i]), y = Y(v);
       if (pen) c.lineTo(x, y); else c.moveTo(x, y);
       pen = true;
     }
     c.stroke();
+  }
+  if (box && o.highlight) {
+    const [x0, x1] = box;
+    c.strokeStyle = err;
+    c.lineWidth = 1.5;
+    c.strokeRect(x0 + 0.75, padT + 0.75, x1 - x0 - 1.5, ph - 1.5);
+    c.font = "600 11px 'IBM Plex Sans'";
+    const tw = c.measureText(o.highlight.label).width + 10;
+    const lx = x0 + tw <= w - padR ? x0 : Math.max(padL, x1 - tw);
+    c.fillStyle = err;
+    c.fillRect(lx, padT + ph - 18, tw, 18);
+    c.fillStyle = "#ffffff";
+    c.textAlign = "left";
+    c.fillText(o.highlight.label, lx + 5, padT + ph - 5);
   }
   // Legend with last values, top-left.
   c.textAlign = "left";

@@ -503,3 +503,15 @@ button { font: inherit; color: inherit; }
   .header-item.hide-sm, .brand .sub, .crumbs { display: none; }
   .voice { left: 16px; width: auto; }
 }
+
+/* Problem highlight chip on the history chart; clickable alerts */
+.box-tag { border: 0; cursor: pointer; font: inherit; font-size: 12px; margin-right: auto; gap: 4px; }
+.alert-item { cursor: pointer; }
+.alert-item:hover { background: var(--layer-hover); }
+
+/* On a buoy page, keep the voice panel over the 3D stage so the charts stay visible.
+   The details column is minmax(380px, 1fr) against 1.35fr: max(380px, 100%/2.35). */
+.voice.on-node { right: calc(max(380px, 42.55%) + 16px); top: 16px; bottom: auto; max-height: calc(100% - 190px); }
+@media (max-width: 900px) {
+  .voice.on-node { right: 16px; top: auto; bottom: 16px; max-height: min(560px, calc(100% - 32px)); }
+}
