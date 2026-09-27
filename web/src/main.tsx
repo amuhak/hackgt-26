@@ -6,7 +6,7 @@ import "@fontsource/ibm-plex-mono/400.css";
 import "./styles.css";
 import { App } from "./App";
 import { connect, tickAges } from "./ws";
-import { useStore } from "./store";
+import { loadVoiceConfig, useStore } from "./store";
 
 (window as unknown as { __store: typeof useStore }).__store = useStore; // debugging
 
@@ -18,5 +18,6 @@ document.documentElement.dataset.theme = (() => {
   }
 })();
 connect();
+loadVoiceConfig();
 tickAges();
 createRoot(document.getElementById("root")!).render(<App />);

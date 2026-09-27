@@ -6,6 +6,8 @@ export type VoiceLine = { id: string; role: "user" | "agent" | "tool" | "sys"; t
 export type VoiceStatus = "off" | "connecting" | "listening" | "thinking" | "speaking" | "error";
 
 type Theme = "dark" | "light";
+export type VoiceProvider = "grok" | "gemini";
+export type VoiceProviderInfo = { available: boolean; label: string; model: string; voice: string; thinking?: string | null };
 
 /** A history chart to open on a buoy page, with a box drawn around [from, to]. */
 export type ChartFocus = { node: string; metric: MetricKey; minutes: number; from: number; to: number; label: string; at: number };
@@ -25,11 +27,14 @@ type State = {
   focusRequest: { id: string | null; at: number } | null; // map fly-to / fit requests
   chartFocus: ChartFocus | null;
   voiceOpen: boolean;
+  voiceProvider: VoiceProvider;
+  voiceProviders: Record<VoiceProvider, VoiceProviderInfo> | null;
   voiceStatus: VoiceStatus;
   voiceError: string | null;
   voiceLog: VoiceLine[];
 
   setTheme: (t: Theme) => void;
+  setVoiceProvider: (p: VoiceProvider) => void;
   setMetric: (m: MetricKey) => void;
   openNode: (id: string | null) => void;
   setHovered: (id: string | null) => void;
@@ -46,6 +51,15 @@ function initialTheme(): Theme {
     /* storage blocked */
   }
   return window.matchMedia?.("(prefers-color-scheme: light)").matches ? "light" : "dark";
+}
+
+function savedProvider(): VoiceProvider | null {
+  try {
+    const p = localStorage.getItem("voiceProvider");
+    return p === "grok" || p === "gemini" ? p : null;
+  } catch {
+    return null;
+  }
 }
 
 function selectedFromHash(): string | null {
@@ -68,6 +82,8 @@ export const useStore = create<State>((set) => ({
   focusRequest: null,
   chartFocus: null,
   voiceOpen: false,
+  voiceProvider: savedProvider() ?? "grok",
+  voiceProviders: null,
   voiceStatus: "off",
   voiceError: null,
   voiceLog: [],
@@ -79,6 +95,14 @@ export const useStore = create<State>((set) => ({
       /* storage blocked */
     }
     set({ theme });
+  },
+  setVoiceProvider: (voiceProvider) => {
+    try {
+      localStorage.setItem("voiceProvider", voiceProvider);
+    } catch {
+      /* storage blocked */
+    }
+    set({ voiceProvider });
   },
   setMetric: (metric) => set({ metric }),
   openNode: (id) => {
@@ -98,6 +122,17 @@ window.addEventListener("popstate", () =>
     return { selected, chartFocus: s.chartFocus?.node === selected ? s.chartFocus : null };
   }),
 );
+
+/** Which voice providers have keys; picks the server's default unless the viewer chose one. */
+export function loadVoiceConfig() {
+  fetch("/api/config")
+    .then((r) => r.json())
+    .then((c) => {
+      const saved = savedProvider();
+      useStore.setState({ voiceProviders: c.voice_providers, voiceProvider: saved ?? (c.voice_default === "gemini" ? "gemini" : "grok") });
+    })
+    .catch(() => {});
+}
 
 export function pushAlert(a: Alert) {
   useStore.setState((s) => ({ alerts: [...s.alerts, a].slice(-100), toasts: [...s.toasts, a].slice(-4) }));

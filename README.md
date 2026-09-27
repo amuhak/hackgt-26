@@ -55,7 +55,8 @@ python server/app.py --serial COM5      # runs the collector too; open http://lo
 ```
 
 - Without `--serial`, it only reads `buoy.db`, so you can run `tools/collector.py` yourself.
-- Voice: put `XAI_API_KEY=...` in `.env` at the repo root. The browser gets a 10-minute token from the backend and talks to `grok-voice-latest` directly. Use Chrome.
+- Voice: put `XAI_API_KEY=...` (Grok Voice) and/or `GEMINI_API_KEY=...` (Gemini Live) in `.env` at the repo root; the Grok / Gemini switch in the header picks one. The browser gets a short-lived token from the backend and talks to the provider directly. Use Chrome.
+  - Optional: `VOICE_PROVIDER=gemini` (default provider), `GEMINI_LIVE_MODEL` (default `gemini-3.8-live`; `gemini-3.8-live-extended-thinking` works but takes ~20 s per answer), `GEMINI_VOICE`, `XAI_VOICE`.
 - No GPS fix indoors: buoys sit on a ring around the map center (dashed dot). Drag them with the pin button on the map; positions and names are saved in `server/fleet.json`.
 - `--sim-fleet 8` adds 8 fake buoys around campus for a fuller map (they aren't written to the DB).
 - UI dev: `python server/app.py` plus `npm run dev` in `web/` (proxies to :8000).

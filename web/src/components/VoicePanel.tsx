@@ -17,6 +17,7 @@ export function VoicePanel() {
   const error = useStore((s) => s.voiceError);
   const log = useStore((s) => s.voiceLog);
   const onNode = useStore((s) => !!s.selected);
+  const via = useStore((s) => s.voiceProviders?.[s.voiceProvider]);
   const [text, setText] = useState("");
   const bars = useRef<HTMLDivElement>(null);
   const logEl = useRef<HTMLDivElement>(null);
@@ -54,7 +55,10 @@ export function VoicePanel() {
         <Microphone size={20} style={{ color: "var(--accent)" }} />
         <div className="voice-state">
           <div className="vs">Tideline voice</div>
-          <div className="label">{STATUS[status]}</div>
+          <div className="label">
+            {STATUS[status]}
+            {via ? ` · ${via.label}` : ""}
+          </div>
         </div>
         <div className="voice-viz" ref={bars}>
           {Array.from({ length: 7 }, (_, i) => (

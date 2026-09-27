@@ -78,9 +78,10 @@ function Header() {
         {link[1]}
         {collector?.serial ? <span className="mono muted">{collector.serial}</span> : null}
       </div>
+      <ProviderToggle />
       <button className={`voice-btn ${voiceOpen ? "on" : ""}`} onClick={() => (voiceOpen ? agent.stop() : agent.start())}>
         <Microphone size={16} />
-        {voiceOpen ? "End voice" : "Ask Tideline"}
+        <span className="vb-text">{voiceOpen ? "End voice" : "Ask Tideline"}</span>
       </button>
       <button
         className="icon-btn"
@@ -91,6 +92,31 @@ function Header() {
         {theme === "dark" ? <Light size={20} /> : <Asleep size={20} />}
       </button>
     </header>
+  );
+}
+
+/** Grok / Gemini switch for the voice agent; a provider without a key is disabled. */
+function ProviderToggle() {
+  const provider = useStore((s) => s.voiceProvider);
+  const info = useStore((s) => s.voiceProviders);
+  const opts = [
+    ["grok", "Grok"],
+    ["gemini", "Gemini"],
+  ] as const;
+  return (
+    <div className="provider-toggle" title="Voice model">
+      {opts.map(([id, label]) => (
+        <button
+          key={id}
+          className={provider === id ? "on" : ""}
+          disabled={info ? !info[id]?.available : false}
+          title={info?.[id] ? `${info[id].label} · ${info[id].model}${info[id].available ? "" : " (no API key)"}` : label}
+          onClick={() => agent.setProvider(id)}
+        >
+          {label}
+        </button>
+      ))}
+    </div>
   );
 }
 

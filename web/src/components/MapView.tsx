@@ -174,7 +174,7 @@ export function MapView({ onInteract }: Props) {
     const b = pts.reduce((b, p) => b.extend(p), new maplibregl.LngLatBounds(pts[0], pts[0]));
     const wide = window.innerWidth > 900;
     map.fitBounds(b, {
-      padding: wide ? { left: 440, right: 320, top: 80, bottom: 80 } : { left: 40, right: 40, top: 40, bottom: 300 },
+      padding: wide ? { left: 440, right: 320, top: 80, bottom: 80 } : { left: 40, right: 40, top: 40, bottom: Math.round(window.innerHeight * 0.42) + 40 },
       maxZoom: 17.5,
       pitch: 30,
       duration: animate ? 1200 : 0,

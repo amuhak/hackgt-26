@@ -7,7 +7,7 @@ It also mints short-lived xAI tokens, so the browser's voice agent never sees th
     python server/app.py --sim-fleet 8    # add 8 fake buoys around campus (demo padding)
 
 Node names and pinned positions live in server/fleet.json; the UI's "Place" mode edits it.
-The xAI key goes in .env at the repo root: XAI_API_KEY=...
+Voice keys go in .env at the repo root: XAI_API_KEY=... (Grok) and/or GEMINI_API_KEY=... (Gemini Live).
 """
 import argparse
 import asyncio
@@ -23,6 +23,7 @@ import sys
 import threading
 import time
 from collections import deque
+from datetime import datetime, timedelta, timezone
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -39,6 +40,7 @@ import collector  # noqa: E402  (DB schema and record flag bits)
 FLEET_PATH = ROOT / "server" / "fleet.json"
 DIST = ROOT / "web" / "dist"
 XAI_SECRETS_URL = "https://api.x.ai/v1/realtime/client_secrets"
+GEMINI_TOKENS_URL = "https://generativelanguage.googleapis.com/v1alpha/auth_tokens"
 
 READING_COLS = ["origin", "seq", "gps_time", "uptime_s", "lat", "lon", "water_c", "air_c", "pressure_hpa",
                 "wave_rms_g", "wave_peak_g", "pitch", "roll", "sats", "flags", "received_at"]
@@ -73,8 +75,28 @@ def load_env():
                 os.environ.setdefault(k.strip(), v.strip().strip('"'))
 
 
+def env_first(*names):
+    return next((os.environ[k] for k in names if os.environ.get(k)), None)
+
+
 def xai_key():
-    return next((os.environ[k] for k in ("XAI_API_KEY", "GROK", "GROCK") if os.environ.get(k)), None)
+    return env_first("XAI_API_KEY", "GROK", "GROCK")
+
+
+def gemini_key():
+    return env_first("GEMINI_API_KEY", "GOOGLE_API_KEY", "GEMINI", "GOOGLE")
+
+
+def voice_providers():
+    gm = os.environ.get("GEMINI_LIVE_MODEL", "gemini-3.8-live")
+    return {
+        "grok": {"available": bool(xai_key()), "label": "Grok Voice",
+                 "model": os.environ.get("XAI_VOICE_MODEL", "grok-voice-latest"), "voice": os.environ.get("XAI_VOICE", "eve")},
+        "gemini": {"available": bool(gemini_key()), "label": "Gemini Live", "model": gm,
+                   "voice": os.environ.get("GEMINI_VOICE", "Kore"),
+                   # The extended-thinking model refuses a session without a thinking level.
+                   "thinking": os.environ.get("GEMINI_THINKING", "low") if "thinking" in gm else None},
+    }
 
 
 def save_fleet():
@@ -448,9 +470,8 @@ def resolve(ref: str) -> Node:
 
 @app.get("/api/config")
 def config():
-    return {"center": fleet["center"], "voice": os.environ.get("XAI_VOICE", "eve"),
-            "voice_model": os.environ.get("XAI_VOICE_MODEL", "grok-voice-latest"),
-            "has_voice_key": bool(xai_key())}
+    return {"center": fleet["center"], "voice_providers": voice_providers(),
+            "voice_default": os.environ.get("VOICE_PROVIDER", "grok")}
 
 
 @app.get("/api/nodes")
@@ -540,7 +561,20 @@ async def set_position(nid: str, p: Position):
 
 
 @app.post("/api/voice/token")
-async def voice_token():
+async def voice_token(provider: str = "grok"):
+    """A short-lived token for the browser, so the API key never leaves this machine."""
+    if provider == "gemini":
+        key = gemini_key()
+        if not key:
+            raise HTTPException(503, "No Gemini key. Put GEMINI_API_KEY=... in .env at the repo root and restart.")
+        now = datetime.now(timezone.utc)
+        async with httpx.AsyncClient(timeout=10) as c:
+            r = await c.post(GEMINI_TOKENS_URL, headers={"x-goog-api-key": key},
+                             json={"uses": 1, "expireTime": (now + timedelta(minutes=30)).isoformat(),
+                                   "newSessionExpireTime": (now + timedelta(minutes=1)).isoformat()})
+        if r.status_code >= 300:
+            raise HTTPException(502, f"Google refused the token request: {r.status_code} {r.text[:300]}")
+        return {"value": r.json()["name"]}
     key = xai_key()
     if not key:
         raise HTTPException(503, "No XAI_API_KEY. Put XAI_API_KEY=... in .env at the repo root and restart.")

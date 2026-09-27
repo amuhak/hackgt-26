@@ -515,3 +515,47 @@ button { font: inherit; color: inherit; }
 @media (max-width: 900px) {
   .voice.on-node { right: 16px; top: auto; bottom: 16px; max-height: min(560px, calc(100% - 32px)); }
 }
+
+/* Voice provider switch in the header (Grok / Gemini) */
+.provider-toggle { display: flex; align-items: center; gap: 0; height: 48px; padding: 0 12px; border-left: 1px solid var(--border); }
+.provider-toggle button {
+  height: 28px; padding: 0 10px; border: 1px solid var(--border-strong); background: none; color: var(--text-2);
+  font: inherit; font-size: 12px; cursor: pointer;
+}
+.provider-toggle button + button { border-left: 0; }
+.provider-toggle button.on { background: var(--text); color: var(--bg); border-color: var(--text); }
+.provider-toggle button:disabled { opacity: 0.35; cursor: not-allowed; }
+
+/* Phones: keep the 3D model clear. Compact title, one-row attitude strip, no legend or banner. */
+@media (max-width: 900px) {
+  .node-page { grid-template-rows: 58vh auto; }
+  .stage-top { left: 16px; right: 16px; top: 12px; }
+  .stage-top .btn.ghost { height: 28px; padding: 0 8px 0 0; font-size: 13px; }
+  .stage-title { font-size: 24px; line-height: 30px; }
+  .stage-sub { margin-top: 4px; gap: 6px; }
+  .stage-sub .label.mono { display: none; }
+  .stage-bottom { left: 12px; right: 12px; bottom: 12px; }
+  .stage-legend, .no-live { display: none; }
+  .attitude { width: 100%; }
+  .att { flex: 1; min-width: 0; padding: 6px 8px; }
+  .att .label { font-size: 11px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .att-val { font-size: 17px; line-height: 22px; }
+  .att-val small { font-size: 11px; }
+}
+@media (max-width: 600px) {
+  .voice-btn .vb-text { display: none; }
+  .provider-toggle { padding: 0 8px; }
+}
+@media (max-width: 900px) {
+  /* Map on phones: overview becomes a short sheet at the bottom so the buoys stay visible above it. */
+  .dash { justify-content: flex-end; }
+  .dash-left { max-height: 42%; }
+  .dash-left .panel-head { padding-top: 8px; padding-bottom: 8px; }
+  .kpi { padding: 8px 16px; }
+  .kpi-val { font-size: 22px; line-height: 28px; }
+  .kpi-sub { display: none; }
+}
+@media (max-width: 900px) {
+  .map-tools { bottom: calc(42% + 16px); }
+  .main:has(.node-page) .map-tools { bottom: 16px; }
+}
