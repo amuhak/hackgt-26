@@ -16,6 +16,7 @@ the collector) go into the `motion` table with an orientation estimate for 3D
 rendering. They are best effort: never acked, resent or relayed.
 """
 import argparse
+from collections import deque
 import math
 import sqlite3
 import struct
@@ -91,13 +92,33 @@ def decode(raw: bytes, now: int) -> tuple:
 
 class Orientation:
     """Mahony filter: integrates the gyro and pulls tilt toward the gravity
-    direction the accelerometer sees. Quaternion is (w, x, y, z), buoy -> world."""
+    direction the accelerometer sees. Quaternion is (w, x, y, z), buoy -> world.
+
+    Gravity can't correct yaw, so a gyro bias turns into steady spin. The buoy
+    only calibrates at boot, and skips it if it was moving then (~2 deg/s of
+    bias on #1), so the bias is re-measured here whenever the buoy sits still."""
 
     KP = 0.5  # how hard the accelerometer corrects the gyro (1/s)
+    STILL_N = 50  # 1 s window at 50 Hz
+    STILL_GYRO_DPS = 1.0  # per-axis spread in the window that counts as still
+    STILL_ACCEL_G = 0.03
 
     def __init__(self):
         self.q = None
         self.t_ms = None
+        self.bias = [0.0, 0.0, 0.0]  # deg/s, on top of the buoy's boot calibration
+        self.win = deque(maxlen=self.STILL_N)
+
+    def learn_bias(self, a, g_dps):
+        self.win.append((math.sqrt(a[0] ** 2 + a[1] ** 2 + a[2] ** 2), *g_dps))
+        if len(self.win) < self.STILL_N:
+            return
+        cols = list(zip(*self.win))
+        if max(cols[0]) - min(cols[0]) > self.STILL_ACCEL_G:
+            return
+        if any(max(c) - min(c) > self.STILL_GYRO_DPS for c in cols[1:]):
+            return
+        self.bias = [sum(c) / len(c) for c in cols[1:]]
 
     @staticmethod
     def from_accel(a):
@@ -107,12 +128,16 @@ class Orientation:
         return (cr * cp, sr * cp, cr * sp, -sr * sp)
 
     def update(self, t_ms, a, g_dps):
+        if self.t_ms is not None and t_ms < self.t_ms:  # buoy rebooted: new boot calibration
+            self.bias = [0.0, 0.0, 0.0]
         if self.q is None or not 0 < t_ms - self.t_ms <= 1000:
             self.q = self.from_accel(a)  # first sample, or after a gap / reboot
+            self.win.clear()
         else:
             dt = (t_ms - self.t_ms) / 1000
+            self.learn_bias(a, g_dps)
             w, x, y, z = self.q
-            gx, gy, gz = (math.radians(v) for v in g_dps)
+            gx, gy, gz = (math.radians(v - b) for v, b in zip(g_dps, self.bias))
             n = math.sqrt(a[0] ** 2 + a[1] ** 2 + a[2] ** 2)
             if n > 0:
                 ax, ay, az = (v / n for v in a)
