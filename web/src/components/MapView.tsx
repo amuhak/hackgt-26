@@ -3,7 +3,7 @@ import maplibregl from "maplibre-gl";
 import "maplibre-gl/dist/maplibre-gl.css";
 import { Add, CenterToFit, Earth, Location, Subtract } from "@carbon/icons-react";
 import { useStore } from "../store";
-import { METRICS, POS_LABEL, STATUS_LABEL, ago, fmt, metricColor } from "../metrics";
+import { METRICS, POS_LABEL, STATUS_LABEL, ago, fmt, linkState, metricColor } from "../metrics";
 import type { NodeInfo } from "../types";
 import { Sparkline } from "./charts";
 
@@ -370,7 +370,8 @@ function HoverCard({ n, style }: { n: NodeInfo; style: React.CSSProperties }) {
         <Sparkline values={n.spark[sparkKey] ?? []} color={c} width={248} height={34} />
       </div>
       <div className="hc-foot">
-        {ago(n.age_s)} · {n.direct ? "direct link" : "via mesh"} · {POS_LABEL[n.pos.source]}
+        {ago(n.age_s)}
+        {n.direct ? " · direct link" : linkState(n) === "relayed" ? " · via mesh" : ""} · {POS_LABEL[n.pos.source]}
         {n.sim ? " · simulated sensors" : ""}
       </div>
     </div>

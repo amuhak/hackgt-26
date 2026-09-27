@@ -1,7 +1,7 @@
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState, type MutableRefObject } from "react";
 import { ArrowLeft, Close, Radio } from "@carbon/icons-react";
 import { useStore } from "../store";
-import { METRICS, POS_LABEL, STATUS_LABEL, ago, duration, fmt, type MetricKey } from "../metrics";
+import { METRICS, POS_LABEL, STATUS_LABEL, ago, duration, fmt, linkState, type MetricKey } from "../metrics";
 import { hasLive, recent } from "../motion";
 import { F, type NodeInfo } from "../types";
 import { BuoyScene, type Live } from "./BuoyScene";
@@ -52,9 +52,9 @@ export function NodePage({ id }: { id: string }) {
                 <span className="tag accent">
                   <Radio size={12} /> Direct link · 50 Hz motion
                 </span>
-              ) : (
+              ) : linkState(n) === "relayed" ? (
                 <span className="tag">Relayed via mesh</span>
-              )}
+              ) : null}
               {n.sim && <span className="tag">Simulated sensors</span>}
               <span className="label mono">{n.id}</span>
             </div>

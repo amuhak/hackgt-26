@@ -1,7 +1,7 @@
 // Browser voice agent on Grok Voice (xAI realtime) or Gemini Live, switchable.
 // The backend mints a short-lived token; audio goes straight between the browser
 // and the provider. Tools run here: data tools call our backend, UI tools drive the store.
-import { MAP_METRICS, METRICS, POS_LABEL, ago, type MetricKey } from "../metrics";
+import { MAP_METRICS, METRICS, POS_LABEL, ago, linkState, type MetricKey } from "../metrics";
 import { openChart, showProblem } from "../problem";
 import { logVoice, useStore, type VoiceProvider, type VoiceProviderInfo } from "../store";
 import type { NodeInfo } from "../types";
@@ -117,7 +117,7 @@ function brief(n: NodeInfo) {
     id: n.id,
     status: n.status,
     last_heard: ago(n.age_s),
-    link: n.direct ? "direct to base, live motion" : "relayed through the mesh",
+    link: { direct: "direct to base, live motion", relayed: "relayed through the mesh", none: "none: not heard recently" }[linkState(n) ?? "none"],
     water_c: r?.water_c,
     air_c: r?.air_c,
     pressure_hpa: r?.pressure_hpa,

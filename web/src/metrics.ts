@@ -34,6 +34,12 @@ export function ramp(x: number): string {
 }
 export const RAMP_CSS = `linear-gradient(90deg, ${["#005d5d", "#08bdba", "#f1c21b", "#ff832b", "#fa4d56"].join(",")})`;
 
+/** How a buoy's data is reaching the base. Only claim a relay while readings are still arriving. */
+export function linkState(n: NodeInfo): "direct" | "relayed" | null {
+  if (n.direct) return "direct";
+  return n.status === "online" && !n.virtual ? "relayed" : null;
+}
+
 export function metricValue(n: NodeInfo, m: MetricKey): number | null {
   if (m === "age") return n.age_s;
   const v = n.latest?.[m];
