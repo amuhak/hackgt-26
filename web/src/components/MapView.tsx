@@ -392,11 +392,33 @@ function Cell({ label, v, u }: { label: string; v: string; u: string }) {
 function PlaceBar() {
   const nodes = useStore((s) => s.nodes);
   const pinned = Object.values(nodes).filter((n) => n.pos.source === "pinned");
+  const [geo, setGeo] = useState<string | null>(null);
   const unpin = (id: string) =>
     fetch(`/api/nodes/${id}/position`, { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" });
+  // Pins the base where this computer is (Wi-Fi positioning: tens of meters). Needs localhost or https.
+  const locateBase = () => {
+    const id = useStore.getState().collector?.id;
+    if (!id) return setGeo("No base configured in fleet.json");
+    if (!navigator.geolocation) return setGeo("This browser has no location");
+    setGeo("Locating…");
+    navigator.geolocation.getCurrentPosition(
+      (p) => {
+        fetch(`/api/nodes/${id}/position`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ lat: p.coords.latitude, lon: p.coords.longitude }),
+        });
+        setGeo(`Base placed, ±${Math.round(p.coords.accuracy)} m`);
+      },
+      (e) => setGeo(e.code === 1 ? "Location blocked: allow it for this site, and turn on Windows location services" : "Couldn't get a location"),
+      { enableHighAccuracy: true, timeout: 15000 },
+    );
+  };
   return (
     <div className="place-bar">
       <span>Drag buoys or the base to where they are. Saved to server/fleet.json.</span>
+      <button className="btn small" onClick={locateBase}>Base at this computer</button>
+      {geo && <span>{geo}</span>}
       {pinned.map((n) => (
         <button key={n.id} className="btn small" onClick={() => unpin(n.id)}>Unpin {n.name}</button>
       ))}
