@@ -48,7 +48,7 @@ Needs Python 3.10+ and Node 20.19+.
 
 ```
 python -m venv .venv
-.venv\Scriptsctivate          # macOS/Linux: source .venv/bin/activate
+.venv\Scripts\activate          # macOS/Linux: source .venv/bin/activate
 pip install -r requirements.txt
 cd web && npm install && npm run build && cd ..
 python server/app.py --serial COM5      # runs the collector too; open http://localhost:8000
