@@ -23,7 +23,7 @@
 
 // Which MPU axis points up when the buoy floats level; the firmware rotates
 // readings so tilt is measured from level. The MPU on the buoy board stands
-// on edge with +X up.
+// on edge with +X up and its marked face (+Z) toward the bow.
 #define MPU_UP_PZ 0  // chip lying flat, facing up
 #define MPU_UP_PX 1
 #define MPU_UP_NX 2

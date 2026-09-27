@@ -179,8 +179,8 @@ int16_t neg16(int16_t v) { return v == INT16_MIN ? INT16_MAX : -v; }
 
 // Rotates a sensor-axes vector into buoy axes (z up), keeping a right-handed frame.
 void toBuoy(const int16_t s[3], int16_t o[3]) {
-#if MPU_UP == MPU_UP_PX
-  o[0] = neg16(s[2]), o[1] = s[1], o[2] = s[0];
+#if MPU_UP == MPU_UP_PX  // chip on edge, marked face (+Z) toward the bow
+  o[0] = s[2], o[1] = neg16(s[1]), o[2] = s[0];
 #elif MPU_UP == MPU_UP_NX
   o[0] = s[2], o[1] = s[1], o[2] = neg16(s[0]);
 #elif MPU_UP == MPU_UP_PY

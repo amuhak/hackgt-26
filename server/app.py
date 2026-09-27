@@ -73,6 +73,10 @@ def load_env():
                 os.environ.setdefault(k.strip(), v.strip().strip('"'))
 
 
+def xai_key():
+    return next((os.environ[k] for k in ("XAI_API_KEY", "GROK", "GROCK") if os.environ.get(k)), None)
+
+
 def save_fleet():
     FLEET_PATH.write_text(json.dumps(fleet, indent=2) + "\n")
 
@@ -446,7 +450,7 @@ def resolve(ref: str) -> Node:
 def config():
     return {"center": fleet["center"], "voice": os.environ.get("XAI_VOICE", "eve"),
             "voice_model": os.environ.get("XAI_VOICE_MODEL", "grok-voice-latest"),
-            "has_voice_key": bool(os.environ.get("XAI_API_KEY"))}
+            "has_voice_key": bool(xai_key())}
 
 
 @app.get("/api/nodes")
@@ -533,7 +537,7 @@ async def set_position(nid: str, p: Position):
 
 @app.post("/api/voice/token")
 async def voice_token():
-    key = os.environ.get("XAI_API_KEY")
+    key = xai_key()
     if not key:
         raise HTTPException(503, "No XAI_API_KEY. Put XAI_API_KEY=... in .env at the repo root and restart.")
     async with httpx.AsyncClient(timeout=10) as c:
