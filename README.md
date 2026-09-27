@@ -26,6 +26,12 @@ pio run -e buoy -t upload --upload-port COM5
 pio device monitor -p COM5            # boot log, I2C scan, one sample every 30 s; type STAT for counters
 ```
 
+Or by board number, with the port auto-detected when one board is plugged in (1 = `buoy_demo`, 2 = `collector`, 3 = `buoy_sim`; stop the server first):
+
+```
+python tools/flash.py 1 -m            # -m opens the monitor after; --erase wipes stored records and seq first
+```
+
 Collect data into SQLite:
 
 ```
