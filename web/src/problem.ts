@@ -11,6 +11,7 @@ const KIND: Record<string, [MetricKey, string]> = {
   tilt: ["tilt", "Tilted"],
   capsize: ["tilt", "Possible capsize"],
   water_jump: ["water_c", "Temperature jump"],
+  water_swing: ["water_c", "Temperature swing"],
   offline: ["water_c", "No data"],
   sensor1: ["air_c", "Air sensor out"],
   sensor2: ["tilt", "Motion sensor out"],
@@ -35,7 +36,7 @@ export function showProblem(a: Alert) {
   const st = useStore.getState();
   const iv = st.nodes[a.node]?.interval_s ?? 30;
   const [metric, label] = KIND[a.kind] ?? ["water_c", a.title];
-  let from = a.t - 2 * iv; // raised when the reading arrives, so the cause is just before
+  let from = a.since ?? a.t - 2 * iv; // raised when the reading arrives, so the cause is just before
   let to = a.t;
   if (a.kind === "offline" || a.kind.startsWith("sensor")) {
     const same = (x: Alert) => x.node === a.node && x.kind === a.kind;

@@ -29,6 +29,7 @@ export type NodeInfo = {
   kind: "buoy";
   virtual: boolean;
   sim: boolean;
+  change?: { minutes: number } & Record<string, number | null>; // movement over the last 10 min
   status: Status;
   direct: boolean;
   age_s: number | null;
@@ -60,7 +61,7 @@ export type Alert = {
   kind: string;
   title: string;
   detail: string;
-  since?: number; // "went silent": when it was last heard
+  since?: number; // when the problem started: last heard (went silent), start of a temperature swing
 };
 
 export const F = { BMP: 1, IMU: 2, WATER: 4, GPS_FIX: 8, GPS_TIME: 16, SIM: 128 };

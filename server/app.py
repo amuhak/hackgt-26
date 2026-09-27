@@ -53,7 +53,11 @@ WAVE_PEAK_ALERT_G = 0.5
 TILT_ALERT_DEG = 30
 CAPSIZE_DEG = 70
 IMPACT_G = 1.2
-WATER_JUMP_C = 1.5
+WATER_JUMP_C = 1.5       # between two readings
+WATER_SWING_C = 3.0      # within WATER_SWING_S: open water moves well under 1 C an hour
+WATER_SWING_S = 600
+RECENT_N = 400           # readings kept per buoy: 13 min at the 2 s demo rate
+CHANGE_S = 600           # window for the per-buoy "change" figures the voice agent sees
 
 args = None
 fleet = {}
@@ -138,7 +142,7 @@ class Node:
         self.id = nid
         self.virtual = virtual
         self.latest = None
-        self.recent = deque(maxlen=2000 if virtual else 120)
+        self.recent = deque(maxlen=2000 if virtual else RECENT_N)
         self.fix = None            # (lat, lon, unix time) of the last real GPS fix
         self.boot = None
         self.last_uptime = None
@@ -195,6 +199,19 @@ class Node:
                     "fix_t": self.fix[2]}
         return default_position(self.id)
 
+    def change(self, window_s=CHANGE_S):
+        """How much water, air and pressure moved over the last window_s, as far back as we hold."""
+        if not self.latest:
+            return None
+        t1 = self.latest["t"]
+        win = [r for r in self.recent if r["t"] >= t1 - window_s]
+        out = {"minutes": round((t1 - win[0]["t"]) / 60, 1)}
+        for m in ("water_c", "air_c", "pressure_hpa"):
+            vals = [r[m] for r in win if r[m] is not None]
+            out[m] = round(vals[-1] - vals[0], 2) if len(vals) > 1 else None
+            out[m + "_range"] = round(max(vals) - min(vals), 2) if len(vals) > 1 else None
+        return out
+
     def to_json(self, now=None):
         now = now or time.time()
         spark = {m: [r.get(m) for r in list(self.recent)[-60:]] for m in SPARK_METRICS}
@@ -205,7 +222,7 @@ class Node:
             "status": self.status(now), "direct": now - self.motion_at < DIRECT_LINK_S,
             "age_s": round(now - self.latest["received_at"], 1) if self.latest else None,
             "interval_s": round(self.interval(), 1), "latest": self.latest, "pos": self.position(),
-            "attitude": self.attitude, "spark": spark,
+            "attitude": self.attitude, "spark": spark, "change": self.change(),
         }
 
 
@@ -260,6 +277,17 @@ def reading_alerts(n, prev, r):
     if prev["water_c"] is not None and r["water_c"] is not None and abs(r["water_c"] - prev["water_c"]) > WATER_JUMP_C:
         raise_alert(n, "water_jump", "warning", f"{nm}: water temperature jumped",
                     f"{prev['water_c']:.1f} to {r['water_c']:.1f} C", every=60)
+    elif r["water_c"] is not None:
+        # A steady climb or fall that never jumps between two readings.
+        win = [x for x in n.recent if x["water_c"] is not None and x["t"] >= r["t"] - WATER_SWING_S]
+        lo, hi = min(win, key=lambda x: x["water_c"]), max(win, key=lambda x: x["water_c"])
+        ref = lo if r["water_c"] - lo["water_c"] >= hi["water_c"] - r["water_c"] else hi
+        d = r["water_c"] - ref["water_c"]
+        if abs(d) > WATER_SWING_C:
+            mins = max(1, round((r["t"] - ref["t"]) / 60))
+            raise_alert(n, "water_swing", "warning",
+                        f"{nm}: water temperature {'rising' if d > 0 else 'falling'} fast",
+                        f"{ref['water_c']:.1f} to {r['water_c']:.1f} C in {mins} min", every=120, since=ref["t"])
     for bit, what in SENSORS:
         if prev["flags"] & bit and not r["flags"] & bit:
             raise_alert(n, f"sensor{bit}", "critical", f"{nm}: {what} stopped responding")
@@ -318,7 +346,7 @@ def get_node(nid, virtual=False):
 def init_from_db():
     for (origin,) in q("SELECT DISTINCT origin FROM readings"):
         rows = [to_reading(r) for r in q(f"SELECT {','.join(c for c in DB_COLS)} FROM readings WHERE origin=? "
-                                         "ORDER BY seq DESC LIMIT 120", (origin,))][::-1]
+                                         "ORDER BY seq DESC LIMIT ?", (origin, RECENT_N))][::-1]
         n = get_node(origin)
         n.boot = assign_times(rows)
         for r in rows:

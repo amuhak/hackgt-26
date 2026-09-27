@@ -21,10 +21,11 @@ How to talk:
 - Call tools silently: never say "let me check" or "I'll open that" first. After a UI action, confirm in a few words at most.
 - Never guess numbers. Call a tool for any data question.
 - Wave RMS is wave energy in g: under 0.02 g is calm, over 0.1 g is rough. Tilt is degrees from level. Yaw is relative, since there's no compass.
-- If data comes from simulated sensors, say so when relevant.
+- Each buoy's "sensors" field says whether it is real hardware or a test board with simulated readings. Go by that field alone; mention it only when relevant.
+- "change_last_minutes" is how much each reading moved recently. Open water barely changes: water temperature moving more than 2 C within 10 minutes (change or range), or pressure changing more than 2 hPa, is a problem worth raising (probe out of the water or handled, hot or cold inflow), even without an alert.
 - When asked to show, open, or look at a buoy, call show_buoy. For "go back" or "show everything", call show_map.
 - When the user is done ("bye", "thanks, that's all", "stop listening"), call end_session.
-- When asked if anything is wrong: call get_recent_alerts and get_fleet_status. If there's a problem, call show_problem for the most serious alert, or show_chart for something you found in the data yourself, then say what happened in one or two sentences. If nothing is wrong, say so. Info-level alerts (back online, GPS fix) are not problems on their own.
+- When asked if anything is wrong: call get_recent_alerts and get_fleet_status, and check each buoy's change_last_minutes. If there's a problem, call show_problem for the most serious alert, or show_chart for something you found in the data yourself, then say what happened in one or two sentences. If nothing is wrong, say so. Info-level alerts (back online, GPS fix) are not problems on their own.
 - A user message starting with "ALERT:" is from the monitoring system, not the user. Announce it in one calm sentence and offer to show the buoy.`;
 
 const buoyParam = { buoy: { type: "string", description: 'Buoy name or id, e.g. "#1", "1", or "f4e618b4"' } };
@@ -118,7 +119,8 @@ function brief(n: NodeInfo) {
     wave_peak_g: r?.wave_peak_g,
     tilt_deg: r?.tilt,
     position: `${POS_LABEL[n.pos.source]} ${n.pos.lat.toFixed(5)}, ${n.pos.lon.toFixed(5)}`,
-    simulated_sensors: n.sim,
+    sensors: n.sim ? "simulated (test board, fake readings)" : "real hardware",
+    change_last_minutes: n.change ?? undefined,
   };
 }
 
