@@ -44,7 +44,10 @@ The motion axes are the buoy's: x forward, y left, z up. The quaternion `qw qx q
 
 Map of the fleet, a 3D page per buoy (RAY.stl, tilting live, with an acceleration arrow), alerts, and a voice agent.
 
+Needs Python 3.10+ and Node 20.19+.
+
 ```
+pip install -r requirements.txt
 cd web && npm install && npm run build && cd ..
 python server/app.py --serial COM5      # runs the collector too; open http://localhost:8000
 ```
