@@ -291,6 +291,7 @@ def main() -> None:
     args = ap.parse_args()
 
     db = sqlite3.connect(args.db)
+    db.execute("PRAGMA journal_mode=WAL")  # the web backend reads while we write
     db.executescript(SCHEMA)
     log(f"waiting for collector on {args.port}...")
     try:

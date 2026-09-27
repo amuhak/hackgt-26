@@ -1,0 +1,8 @@
+{
+  "center": [33.77541, -84.39735],
+  "collector": {"id": "f4e5cbbc", "name": "Base", "pos": null},
+  "nodes": {
+    "f4e618b4": {"name": "#1", "pos": null},
+    "f4e5f71c": {"name": "#3", "pos": null}
+  }
+}

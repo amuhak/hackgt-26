@@ -2,3 +2,10 @@
 .vscode/
 __pycache__/
 *.db
+*.db-journal
+*.db-wal
+*.db-shm
+.env
+node_modules/
+web/dist/
+*.tsbuildinfo

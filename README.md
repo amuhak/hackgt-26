@@ -40,6 +40,21 @@ python tools/collector.py COM6 --db buoy.db
 
 The motion axes are the buoy's: x forward, y left, z up. The quaternion `qw qx qy qz` rotates buoy to world. It comes from a Mahony filter over the accelerometer and gyro. Yaw drifts about 0.5 deg/min, because there's no magnetometer.
 
+## Web console (Tideline)
+
+Map of the fleet, a 3D page per buoy (RAY.stl, tilting live, with an acceleration arrow), alerts, and a voice agent.
+
+```
+cd web && npm install && npm run build && cd ..
+python server/app.py --serial COM5      # runs the collector too; open http://localhost:8000
+```
+
+- Without `--serial`, it only reads `buoy.db`, so you can run `tools/collector.py` yourself.
+- Voice: put `XAI_API_KEY=...` in `.env` at the repo root. The browser gets a 10-minute token from the backend and talks to `grok-voice-latest` directly. Use Chrome.
+- No GPS fix indoors: buoys sit on a ring around the map center (dashed dot). Drag them with the pin button on the map; positions and names are saved in `server/fleet.json`.
+- `--sim-fleet 8` adds 8 fake buoys around campus for a fuller map (they aren't written to the DB).
+- UI dev: `python server/app.py` plus `npm run dev` in `web/` (proxies to :8000).
+
 ## How the mesh works
 
 - Every 30 s, each buoy stores a record in flash. A record holds water temperature, air temperature, pressure, GPS position and time, and wave statistics: vertical-accel RMS and peak, plus tilt, from 50 Hz IMU sampling.
