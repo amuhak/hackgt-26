@@ -1,6 +1,6 @@
 import { Radio } from "@carbon/icons-react";
 import { useStore } from "../store";
-import { MAP_METRICS, METRICS, RAMP_CSS, STATUS_LABEL, ago, fmt, fmtMetric, metricColor, type MetricKey } from "../metrics";
+import { MAP_METRICS, METRICS, RAMP_CSS, STATUS_LABEL, ago, fmt, fmtMetric, metricColor, metricRange, metricValue, valueColor, type MetricKey } from "../metrics";
 import type { NodeInfo } from "../types";
 import { Sparkline } from "./charts";
 import { showProblem } from "../problem";
@@ -11,15 +11,19 @@ export function Dashboard({ faded }: { faded: boolean }) {
   const hovered = useStore((s) => s.hovered);
   const alerts = useStore((s) => s.alerts);
   const total = useStore((s) => s.readingsTotal);
-  const list = Object.values(nodes).sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true }));
-  const online = list.filter((n) => n.status === "online");
-  const live = list.filter((n) => n.status !== "offline" && n.latest);
+  const all = Object.values(nodes);
+  const list = all.filter((n) => !n.group).sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true }));
+  const groups = new Map<string, NodeInfo[]>();
+  for (const n of all) if (n.group) groups.set(n.group, [...(groups.get(n.group) ?? []), n]);
+  const online = all.filter((n) => n.status === "online");
+  const live = all.filter((n) => n.status !== "offline" && n.latest);
 
   const water = live.map((n) => n.latest!.water_c).filter((v): v is number => v != null);
   const waves = live
     .filter((n) => n.latest!.wave_peak_g != null)
     .sort((a, b) => b.latest!.wave_peak_g! - a.latest!.wave_peak_g!);
-  const perMin = list.reduce((s, n) => s + (n.status === "online" ? 60 / Math.max(n.interval_s, 1) : 0), 0);
+  const range = metricRange(metric);
+  const perMin = all.reduce((s, n) => s + (n.status === "online" ? 60 / Math.max(n.interval_s, 1) : 0), 0);
 
   return (
     <div className={`dash ${faded ? "faded" : ""}`}>
@@ -33,9 +37,9 @@ export function Dashboard({ faded }: { faded: boolean }) {
             <div className="label">Buoys online</div>
             <div className="kpi-val">
               {online.length}
-              <small>/ {list.length}</small>
+              <small>/ {all.length}</small>
             </div>
-            <div className="kpi-sub">{list.filter((n) => n.direct).length} in direct range of base</div>
+            <div className="kpi-sub">{all.filter((n) => n.direct).length} in direct range of base</div>
           </div>
           <div className="kpi">
             <div className="label">Water temperature</div>
@@ -68,6 +72,9 @@ export function Dashboard({ faded }: { faded: boolean }) {
           {list.map((n) => (
             <NodeRow key={n.id} n={n} metric={metric} hot={hovered === n.id} />
           ))}
+          {[...groups].map(([name, members]) => (
+            <GroupRow key={name} name={name} members={members} metric={metric} />
+          ))}
         </div>
       </div>
 
@@ -95,8 +102,8 @@ export function Dashboard({ faded }: { faded: boolean }) {
                 </>
               ) : (
                 <>
-                  <span>{METRICS[metric].range[0]}</span>
-                  <span>{METRICS[metric].range[1]} {METRICS[metric].unit}</span>
+                  <span>{fmt(range[0], METRICS[metric].digits)}</span>
+                  <span>{fmt(range[1], METRICS[metric].digits)} {METRICS[metric].unit}</span>
                 </>
               )}
             </div>
@@ -125,6 +132,32 @@ export function Dashboard({ faded }: { faded: boolean }) {
         </div>
       </div>
     </div>
+  );
+}
+
+/** A simulated fleet as one row: its spread for the chosen metric; click to fly there. */
+function GroupRow({ name, members, metric }: { name: string; members: NodeInfo[]; metric: MetricKey }) {
+  const vals = members.map((n) => metricValue(n, metric)).filter((v): v is number => v != null);
+  const mean = vals.length ? vals.reduce((a, b) => a + b, 0) / vals.length : null;
+  const online = members.filter((n) => n.status === "online").length;
+  const d = METRICS[metric].digits;
+  return (
+    <button className="node-row group-row" style={{ ["--c" as string]: valueColor(metric, mean) }} onClick={() => useStore.getState().focus(null, name)}>
+      <div className="swatch" />
+      <div style={{ minWidth: 0 }}>
+        <div className="nm">{name}</div>
+        <div className="meta">
+          <span>{members.length} buoys</span>
+          <span>{online} online</span>
+          <span>sim</span>
+        </div>
+      </div>
+      <div className="val">
+        {metric === "age" ? `${Math.round(mean ?? 0)} s` : fmt(mean, d)}
+        <div className="label">avg {METRICS[metric].unit}</div>
+      </div>
+      <div className="group-span mono">{vals.length ? `${fmt(Math.min(...vals), d)} – ${fmt(Math.max(...vals), d)}` : ""}</div>
+    </button>
   );
 }
 

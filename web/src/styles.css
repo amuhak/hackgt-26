@@ -360,6 +360,7 @@ button { font: inherit; color: inherit; }
   cursor: pointer;
 }
 .node-row:hover, .node-row.hot { background: var(--layer-hover); }
+.group-row .group-span { font-size: 11px; color: var(--text-3); text-align: right; white-space: nowrap; }
 .node-row .swatch { height: 36px; background: var(--c); }
 .node-row .nm { font-size: 16px; display: flex; align-items: center; gap: 8px; }
 .node-row .meta { font-size: 12px; color: var(--text-3); margin-top: 2px; display: flex; gap: 8px; align-items: center; }

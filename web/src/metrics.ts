@@ -1,17 +1,19 @@
+import { useStore } from "./store";
 import type { NodeInfo } from "./types";
 
 export type MetricKey = "water_c" | "air_c" | "pressure_hpa" | "wave_rms_g" | "wave_peak_g" | "tilt" | "age";
 
-type Metric = { label: string; short: string; unit: string; digits: number; range: [number, number] };
+// range: the fixed color scale. span: the narrowest scale when it tightens to a big fleet's readings.
+type Metric = { label: string; short: string; unit: string; digits: number; range: [number, number]; span: number };
 
 export const METRICS: Record<MetricKey, Metric> = {
-  water_c: { label: "Water temperature", short: "Water", unit: "°C", digits: 1, range: [5, 30] },
-  air_c: { label: "Air temperature", short: "Air", unit: "°C", digits: 1, range: [0, 40] },
-  pressure_hpa: { label: "Pressure", short: "Pressure", unit: "hPa", digits: 1, range: [960, 1030] },
-  wave_rms_g: { label: "Wave energy (RMS)", short: "Waves", unit: "g", digits: 3, range: [0, 0.2] },
-  wave_peak_g: { label: "Wave peak", short: "Peak", unit: "g", digits: 2, range: [0, 1] },
-  tilt: { label: "Tilt", short: "Tilt", unit: "°", digits: 1, range: [0, 40] },
-  age: { label: "Last heard", short: "Heard", unit: "", digits: 0, range: [0, 600] },
+  water_c: { label: "Water temperature", short: "Water", unit: "°C", digits: 1, range: [5, 30], span: 2 },
+  air_c: { label: "Air temperature", short: "Air", unit: "°C", digits: 1, range: [0, 40], span: 3 },
+  pressure_hpa: { label: "Pressure", short: "Pressure", unit: "hPa", digits: 1, range: [960, 1030], span: 4 },
+  wave_rms_g: { label: "Wave energy (RMS)", short: "Waves", unit: "g", digits: 3, range: [0, 0.2], span: 0.03 },
+  wave_peak_g: { label: "Wave peak", short: "Peak", unit: "g", digits: 2, range: [0, 1], span: 0.1 },
+  tilt: { label: "Tilt", short: "Tilt", unit: "°", digits: 1, range: [0, 40], span: 5 },
+  age: { label: "Last heard", short: "Heard", unit: "", digits: 0, range: [0, 600], span: 600 },
 };
 
 export const MAP_METRICS: MetricKey[] = ["water_c", "air_c", "wave_rms_g", "tilt", "pressure_hpa", "age"];
@@ -38,12 +40,45 @@ export function metricValue(n: NodeInfo, m: MetricKey): number | null {
   return v == null ? null : v;
 }
 
+const rangeCache = new WeakMap<object, Partial<Record<MetricKey, [number, number]>>>();
+
+/** The color scale for a metric. With 10+ buoys reporting it tightens to what they read
+ *  (2nd to 98th percentile), so a big fleet shows its gradients instead of one color. */
+export function metricRange(m: MetricKey): [number, number] {
+  const fixed = METRICS[m].range;
+  if (m === "age") return fixed;
+  const nodes = useStore.getState().nodes;
+  let cache = rangeCache.get(nodes);
+  if (!cache) rangeCache.set(nodes, (cache = {}));
+  if (cache[m]) return cache[m]!;
+  const vals = Object.values(nodes)
+    .filter((n) => n.status !== "offline")
+    .map((n) => n.latest?.[m])
+    .filter((v): v is number => v != null)
+    .sort((a, b) => a - b);
+  let r = fixed;
+  if (vals.length >= 10) {
+    let lo = vals[Math.floor(vals.length * 0.02)];
+    let hi = vals[Math.ceil(vals.length * 0.98) - 1];
+    const grow = Math.max(0, METRICS[m].span - (hi - lo)) / 2;
+    lo -= grow;
+    hi += grow;
+    const step = 10 ** -METRICS[m].digits;
+    r = [Math.floor(lo / step) * step, Math.ceil(hi / step) * step];
+  }
+  cache[m] = r;
+  return r;
+}
+
+export function valueColor(m: MetricKey, v: number | null | undefined): string {
+  if (v == null) return "#8d8d8d";
+  const [lo, hi] = metricRange(m);
+  return ramp((v - lo) / (hi - lo));
+}
+
 export function metricColor(n: NodeInfo, m: MetricKey): string {
   if (n.status === "offline" || n.status === "unknown") return "#8d8d8d";
-  const v = metricValue(n, m);
-  if (v == null) return "#8d8d8d";
-  const [lo, hi] = METRICS[m].range;
-  return ramp((v - lo) / (hi - lo));
+  return valueColor(m, metricValue(n, m));
 }
 
 export function fmt(v: number | null | undefined, digits = 1): string {

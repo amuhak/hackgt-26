@@ -24,7 +24,7 @@ type State = {
   selected: string | null;
   hovered: string | null;
   placing: boolean;
-  focusRequest: { id: string | null; at: number } | null; // map fly-to / fit requests
+  focusRequest: { id: string | null; area?: string; at: number } | null; // map fly-to / fit requests; area = a fleet group
   chartFocus: ChartFocus | null;
   voiceOpen: boolean;
   voiceProvider: VoiceProvider;
@@ -39,7 +39,7 @@ type State = {
   openNode: (id: string | null) => void;
   setHovered: (id: string | null) => void;
   setPlacing: (p: boolean) => void;
-  focus: (id: string | null) => void;
+  focus: (id: string | null, area?: string) => void;
   dismissToast: (id: string) => void;
 };
 
@@ -112,7 +112,7 @@ export const useStore = create<State>((set) => ({
   },
   setHovered: (hovered) => set({ hovered }),
   setPlacing: (placing) => set({ placing }),
-  focus: (id) => set({ focusRequest: { id, at: Date.now() } }),
+  focus: (id, area) => set({ focusRequest: { id, area, at: Date.now() } }),
   dismissToast: (id) => set((s) => ({ toasts: s.toasts.filter((t) => t.id !== id) })),
 }));
 

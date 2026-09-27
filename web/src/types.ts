@@ -29,6 +29,7 @@ export type NodeInfo = {
   kind: "buoy";
   virtual: boolean;
   sim: boolean;
+  group?: string | null; // simulated fleet it belongs to, e.g. "Georgia coast"
   change?: { minutes: number } & Record<string, number | null>; // movement over the last 10 min
   status: Status;
   direct: boolean;

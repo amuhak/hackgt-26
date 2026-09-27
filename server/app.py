@@ -5,6 +5,7 @@ It also mints short-lived xAI tokens, so the browser's voice agent never sees th
     python server/app.py                  # read buoy.db; run tools/collector.py yourself
     python server/app.py --serial COM5    # also run the collector on COM5
     python server/app.py --sim-fleet 8    # add 8 fake buoys around campus (demo padding)
+    python server/app.py --coast 500      # add 500 fake buoys off the Georgia coast (scale demo)
 
 Node names and pinned positions live in server/fleet.json; the UI's "Place" mode edits it.
 Voice keys go in .env at the repo root: XAI_API_KEY=... (Grok) and/or GEMINI_API_KEY=... (Gemini Live).
@@ -151,6 +152,7 @@ class Node:
         self.status_was = None
         self.throttle = {}         # alert kind -> last time raised
         self.sim_name = None
+        self.group = None          # simulated fleets shown as one group: "Georgia coast"
 
     @property
     def name(self):
@@ -171,7 +173,8 @@ class Node:
             self.stamp(r)
         self.latest = r
         self.recent.append(r)
-        if r["flags"] & collector.F_GPS_FIX and not r["flags"] & collector.F_SIM:
+        # A sim board's GPS is fake; server-made fleets carry their intended positions.
+        if r["flags"] & collector.F_GPS_FIX and (self.virtual or not r["flags"] & collector.F_SIM):
             self.fix = (r["lat"], r["lon"], r["t"])
         if live and not self.virtual:
             reading_alerts(self, prev, r)
@@ -217,7 +220,7 @@ class Node:
         spark = {m: [r.get(m) for r in list(self.recent)[-60:]] for m in SPARK_METRICS}
         spark["t"] = [r["t"] for r in list(self.recent)[-60:]]
         return {
-            "id": self.id, "name": self.name, "kind": "buoy", "virtual": self.virtual,
+            "id": self.id, "name": self.name, "kind": "buoy", "virtual": self.virtual, "group": self.group,
             "sim": bool(self.latest and self.latest["flags"] & collector.F_SIM),
             "status": self.status(now), "direct": now - self.motion_at < DIRECT_LINK_S,
             "age_s": round(now - self.latest["received_at"], 1) if self.latest else None,
@@ -321,6 +324,8 @@ def rotate(qt, v):
 
 def status_alerts(now):
     for n in nodes.values():
+        if n.virtual:  # simulated fleets never raise alerts
+            continue
         s = n.status(now)
         if n.status_was in ("online",) and s in ("stale", "offline"):
             raise_alert(n, "offline", "critical", f"Buoy {n.name} went silent",
@@ -430,8 +435,8 @@ async def tail_loop():
         events, pending_events[:] = pending_events[:], []
         ids = set(pending_nodes)
         pending_nodes.clear()
-        for nid in ids:
-            await broadcast({"type": "node", "node": nodes[nid].to_json(now)})
+        if ids:  # one message per tick, so a big fleet doesn't re-render the UI per buoy
+            await broadcast({"type": "nodes", "nodes": [nodes[nid].to_json(now) for nid in ids]})
         for e in events:
             await broadcast(e)
         await asyncio.sleep(0.1)
@@ -470,6 +475,79 @@ async def sim_loop(count: int):
         await asyncio.sleep(5)
 
 
+# ---- simulated Georgia coast fleet (off unless --coast) ---------------------
+
+# Outer shore of the barrier islands, Tybee Island down to the St. Marys entrance.
+GA_COAST = [(32.00, -80.84), (31.90, -80.95), (31.76, -81.04), (31.62, -81.12), (31.50, -81.19),
+            (31.35, -81.26), (31.20, -81.32), (31.06, -81.39), (30.90, -81.42), (30.71, -81.40)]
+COAST_GROUP = "Georgia coast"
+COAST_INTERVAL_S = 30
+COAST_KEEP = 120  # readings held per buoy: 1 h of history
+
+
+def coast_point(rng):
+    """(lat, lon, km offshore): a point on the shore line, pushed out to sea, mostly near shore."""
+    seg = [math.dist(a, b) for a, b in zip(GA_COAST, GA_COAST[1:])]
+    x = rng.uniform(0, sum(seg))
+    for (a, b), L in zip(zip(GA_COAST, GA_COAST[1:]), seg):
+        if x <= L:
+            f = x / L
+            lat, lon = a[0] + f * (b[0] - a[0]), a[1] + f * (b[1] - a[1])
+            break
+        x -= L
+    km = 2 + 88 * rng.random() ** 1.7
+    lat += rng.gauss(0, 0.01) - km * 0.25 / 111  # the shelf runs out to the south-east
+    lon += km / (111.32 * math.cos(math.radians(lat)))
+    return lat, lon, km
+
+
+def coast_reading(s, t, rng):
+    """One reading for buoy s at time t. Offshore is warmer (Gulf Stream side) and rougher."""
+    for k, sd in (("dw", 0.04), ("da", 0.08), ("dp", 0.05), ("dv", 0.003)):
+        s[k] = 0.97 * s[k] + rng.gauss(0, sd)  # slow, mean-reverting drift
+    km, lat = s["km"], s["lat"]
+    water = 26.6 + 0.02 * km + 0.5 * (32.0 - lat) + s["dw"]
+    air = 25.2 + 0.8 * (32.0 - lat) - 0.012 * km + 0.6 * math.sin(t / 3600) + s["da"]
+    p = 1012.0 + 1.6 * (lat - 30.7) - 0.008 * km + s["dp"]
+    wave = min(0.08, max(0.004, 0.01 + 0.0008 * km + s["dv"]))  # stays below "rough" (0.1 g)
+    amp = 2 + 60 * wave
+    pitch = amp * math.sin(t / 7 + s["phase"]) + rng.gauss(0, 0.4)
+    roll = 0.8 * amp * math.cos(t / 5 + s["phase"]) + rng.gauss(0, 0.4)
+    up = int(t - s["boot"])
+    r = to_reading((s["n"].id, s["seq"], int(t), up, round(lat + rng.gauss(0, 2e-6), 7), round(s["lon"] + rng.gauss(0, 2e-6), 7),
+                    round(water, 2), round(air, 2), round(p, 2), round(wave, 3), round(min(0.45, wave * 2.6), 3),
+                    round(pitch, 2), round(roll, 2), rng.randint(7, 11), 0x1F | collector.F_SIM, t))
+    s["seq"] += 1
+    return r
+
+
+async def coast_loop(count: int):
+    rng = random.Random(1733)  # the year Savannah was founded; same fleet every run
+    now = time.time()
+    sims = []
+    for i in range(count):
+        n = get_node(f"c0a5{i:04x}", virtual=True)
+        n.sim_name, n.group = f"C{i + 1}", COAST_GROUP
+        n.recent = deque(maxlen=COAST_KEEP)
+        lat, lon, km = coast_point(rng)
+        s = {"n": n, "lat": lat, "lon": lon, "km": km, "seq": 0, "boot": now - rng.uniform(3600, 86400),
+             "phase": rng.uniform(0, 6.3), "dw": 0.0, "da": 0.0, "dp": 0.0, "dv": 0.0,
+             "next": now + COAST_INTERVAL_S * i / max(count, 1)}  # staggered, like real buoys
+        for k in range(COAST_KEEP, 0, -1):  # an hour of history, so charts and trends aren't empty
+            n.add(coast_reading(s, s["next"] - k * COAST_INTERVAL_S, rng))
+        n.status_was = "online"
+        sims.append(s)
+    print(f"coast fleet: {count} simulated buoys off Georgia", flush=True)
+    while True:
+        now = time.time()
+        for s in sims:
+            if now >= s["next"]:
+                s["next"] += COAST_INTERVAL_S
+                s["n"].add(coast_reading(s, now, rng))
+                pending_nodes.add(s["n"].id)
+        await asyncio.sleep(0.5)
+
+
 # ---- HTTP API --------------------------------------------------------------
 
 @asynccontextmanager
@@ -477,6 +555,8 @@ async def lifespan(_app):
     tasks = [asyncio.create_task(tail_loop())]
     if args.sim_fleet:
         tasks.append(asyncio.create_task(sim_loop(args.sim_fleet)))
+    if args.coast:
+        tasks.append(asyncio.create_task(coast_loop(args.coast)))
     yield
     for t in tasks:
         t.cancel()
@@ -636,6 +716,7 @@ def main():
     ap.add_argument("--host", default="0.0.0.0")
     ap.add_argument("--port", type=int, default=8000)
     ap.add_argument("--sim-fleet", type=int, default=0, metavar="N", help="add N fake buoys around the map center")
+    ap.add_argument("--coast", type=int, default=0, metavar="N", help="add N fake buoys off the Georgia coast")
     args = ap.parse_args()
     load_env()
     fleet = json.loads(FLEET_PATH.read_text())

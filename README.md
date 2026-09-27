@@ -65,6 +65,7 @@ python server/app.py --serial COM5      # runs the collector too; open http://lo
   - Optional: `VOICE_PROVIDER=gemini` (default provider), `GEMINI_LIVE_MODEL` (default `gemini-3.8-live`; `gemini-3.8-live-extended-thinking` works but takes ~20 s per answer), `GEMINI_VOICE`, `XAI_VOICE`.
 - No GPS fix indoors: buoys sit on a ring around the map center (dashed dot). Drag them with the pin button on the map; positions and names are saved in `server/fleet.json`.
 - `--sim-fleet 8` adds 8 fake buoys around campus for a fuller map (they aren't written to the DB).
+- `--coast 500` adds 500 fake buoys off the Georgia coast (the globe button on the map flies there; say "show me the coast fleet"). They never raise alerts, and the voice agent treats them as a demo, not a problem.
 - UI dev: `python server/app.py` plus `npm run dev` in `web/` (proxies to :8000).
 
 ## How the mesh works

@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import maplibregl from "maplibre-gl";
 import "maplibre-gl/dist/maplibre-gl.css";
-import { Add, CenterToFit, Location, Subtract } from "@carbon/icons-react";
+import { Add, CenterToFit, Earth, Location, Subtract } from "@carbon/icons-react";
 import { useStore } from "../store";
 import { METRICS, POS_LABEL, STATUS_LABEL, ago, fmt, metricColor } from "../metrics";
 import type { NodeInfo } from "../types";
@@ -95,11 +95,110 @@ export function MapView({ onInteract }: Props) {
     };
   }, [nodes, collector, ready, theme]);
 
+  // ---- simulated fleets: one circle layer, since hundreds of DOM markers would crawl ----
+  const dotsAt = useRef(0);
+  const dotsTimer = useRef(0);
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !ready) return;
+    const draw = () => {
+      dotsAt.current = Date.now();
+      const st = useStore.getState();
+      const features = Object.values(st.nodes)
+        .filter((n) => n.group)
+        .map((n) => ({
+          type: "Feature" as const,
+          properties: { id: n.id, c: metricColor(n, st.metric) },
+          geometry: { type: "Point" as const, coordinates: [n.pos.lon, n.pos.lat] },
+        }));
+      const data = { type: "FeatureCollection" as const, features };
+      const src = map.getSource("fleet-dots") as maplibregl.GeoJSONSource | undefined;
+      if (src) {
+        src.setData(data);
+        return;
+      }
+      if (!features.length) return;
+      map.addSource("fleet-dots", { type: "geojson", data });
+      map.addLayer({
+        id: "fleet-dots",
+        type: "circle",
+        source: "fleet-dots",
+        paint: {
+          "circle-color": ["get", "c"],
+          "circle-radius": ["interpolate", ["linear"], ["zoom"], 5, 2.5, 9, 4.5, 13, 7],
+          "circle-stroke-width": 1,
+          "circle-stroke-color": st.theme === "dark" ? "rgba(0,0,0,0.6)" : "rgba(255,255,255,0.9)",
+          "circle-opacity": 0.92,
+        },
+      });
+      map.addLayer({
+        id: "fleet-dots-hot",
+        type: "circle",
+        source: "fleet-dots",
+        filter: ["==", ["get", "id"], st.hovered ?? ""],
+        paint: {
+          "circle-radius": ["interpolate", ["linear"], ["zoom"], 5, 6, 9, 9, 13, 13],
+          "circle-color": "rgba(0,0,0,0)",
+          "circle-stroke-width": 2,
+          "circle-stroke-color": st.theme === "dark" ? "#f4f4f4" : "#161616",
+        },
+      });
+    };
+    // At most one redraw a second; the last change always lands.
+    const apply = () => {
+      clearTimeout(dotsTimer.current);
+      const wait = 1000 - (Date.now() - dotsAt.current);
+      if (wait <= 0 || !map.getSource("fleet-dots")) draw();
+      else dotsTimer.current = window.setTimeout(retry, wait);
+    };
+    // addSource throws while a new style is loading (isStyleLoaded also stays false while
+    // tiles stream in, so it can't gate this); try now, else once the style lands.
+    const retry = () => {
+      try {
+        apply();
+      } catch {
+        /* the next update tries again */
+      }
+    };
+    try {
+      apply();
+    } catch {
+      map.once("style.load", retry);
+    }
+    return () => {
+      map.off("style.load", retry);
+    };
+  }, [nodes, metric, ready, theme]);
+
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !ready) return;
+    map.on("mousemove", "fleet-dots", (e) => {
+      const id = e.features?.[0]?.properties?.id as string | undefined;
+      if (id && useStore.getState().hovered !== id) useStore.getState().setHovered(id);
+      map.getCanvas().style.cursor = "pointer";
+    });
+    map.on("mouseleave", "fleet-dots", () => {
+      useStore.getState().setHovered(null);
+      map.getCanvas().style.cursor = "";
+    });
+    map.on("click", "fleet-dots", (e) => {
+      const id = e.features?.[0]?.properties?.id as string | undefined;
+      if (id && !useStore.getState().placing) open(id);
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [ready]);
+
+  useEffect(() => {
+    const map = mapRef.current;
+    if (map?.getLayer("fleet-dots-hot")) map.setFilter("fleet-dots-hot", ["==", ["get", "id"], hovered ?? ""]);
+  }, [hovered]);
+
   // ---- markers ----
   useEffect(() => {
     const map = mapRef.current;
     if (!map) return;
-    const all: (NodeInfo | { id: string; kind: "collector"; pos: NodeInfo["pos"] })[] = [...Object.values(nodes)];
+    const all: (NodeInfo | { id: string; kind: "collector"; pos: NodeInfo["pos"] })[] = Object.values(nodes).filter((n) => !n.group);
     if (collector) all.push({ id: "__base", kind: "collector", pos: collector.pos });
     const seen = new Set<string>();
     for (const n of all) {
@@ -165,11 +264,15 @@ export function MapView({ onInteract }: Props) {
   }, []);
 
   // ---- camera ----
-  const fitAll = (animate = true) => {
+  // The buoys here and the base; with an area, one simulated fleet instead.
+  const fitAll = (animate = true, area?: string) => {
     const map = mapRef.current;
-    const pts = Object.values(useStore.getState().nodes).map((n) => [n.pos.lon, n.pos.lat] as [number, number]);
+    const all = Object.values(useStore.getState().nodes);
+    const local = all.filter((n) => !n.group);
+    const pick = area ? all.filter((n) => n.group === area) : local.length ? local : all;
+    const pts = pick.map((n) => [n.pos.lon, n.pos.lat] as [number, number]);
     const c = useStore.getState().collector;
-    if (c) pts.push([c.pos.lon, c.pos.lat]);
+    if (c && !area) pts.push([c.pos.lon, c.pos.lat]);
     if (!map || !pts.length) return;
     const b = pts.reduce((b, p) => b.extend(p), new maplibregl.LngLatBounds(pts[0], pts[0]));
     const wide = window.innerWidth > 900;
@@ -201,7 +304,7 @@ export function MapView({ onInteract }: Props) {
     if (focusRequest.id) {
       const n = useStore.getState().nodes[focusRequest.id];
       if (n) mapRef.current?.flyTo({ center: [n.pos.lon, n.pos.lat], zoom: 18, pitch: 45, duration: 1000 });
-    } else fitAll();
+    } else fitAll(true, focusRequest.area);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [focusRequest]);
 
@@ -213,6 +316,7 @@ export function MapView({ onInteract }: Props) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selected]);
 
+  const group = Object.values(nodes).find((n) => n.group)?.group;
   const hn = hovered ? nodes[hovered] : null;
   let card = null;
   if (hn && mapRef.current && !placing) {
@@ -231,6 +335,7 @@ export function MapView({ onInteract }: Props) {
         <button className="icon-btn" title="Zoom in" onClick={() => mapRef.current?.zoomIn()}><Add size={20} /></button>
         <button className="icon-btn" title="Zoom out" onClick={() => mapRef.current?.zoomOut()}><Subtract size={20} /></button>
         <button className="icon-btn" title="Fit fleet" onClick={() => fitAll()}><CenterToFit size={20} /></button>
+        {group && <button className="icon-btn" title={`Show the ${group} fleet`} onClick={() => fitAll(true, group)}><Earth size={20} /></button>}
         <button className={`icon-btn ${placing ? "on" : ""}`} title="Place buoys (drag to set position)" onClick={() => useStore.getState().setPlacing(!placing)}>
           <Location size={20} />
         </button>

@@ -14,7 +14,9 @@ const INSTRUCTIONS = `You are Tideline, the voice of a live console for a mesh o
 
 Each buoy is a small manta-ray-shaped hull with a water temperature probe, an air temperature and pressure sensor, a 50 Hz motion sensor and GPS. The buoys relay each other's data over an ESP-NOW radio mesh to a base station plugged into this laptop, so data from buoys out of range still arrives. Buoys in direct range of the base also stream live motion.
 
-Buoys are named like "#1" and "#3"; say "buoy one", "buoy three".
+Buoys are named like "#1" and "#3"; say "buoy one", "buoy three". Those, in get_fleet_status's "buoys" list, are the real deployment.
+
+There may also be a simulated fleet of hundreds of buoys off the Georgia coast (named C1, C2, ...), a demo of how the console scales. It is fake data: never report it as a problem, and leave it out of "is anything wrong" answers. Mention it only when asked about it, the coast, or the whole fleet's size.
 
 How to talk:
 - Speak in one or two short sentences. Lead with what matters; don't list every reading unless asked. Round sensibly: temperatures to one decimal, pressure to whole hectopascals, g to two decimals.
@@ -55,7 +57,11 @@ const TOOLS: ToolDef[] = [
     description: "Open a buoy's page in the UI: its 3D model, live tilt and all its details.",
     parameters: { type: "object", properties: buoyParam, required: ["buoy"] },
   },
-  { name: "show_map", description: "Go back to the fleet map, zoomed to fit every buoy.", parameters: { type: "object", properties: {} } },
+  {
+    name: "show_map",
+    description: "Go back to the fleet map, zoomed to fit the buoys here, or to the simulated Georgia coast fleet.",
+    parameters: { type: "object", properties: { area: { type: "string", enum: ["here", "coast"], description: 'Default "here"' } } },
+  },
   {
     name: "set_map_color",
     description: "Choose which metric colors the buoys on the map.",
@@ -124,6 +130,28 @@ function brief(n: NodeInfo) {
   };
 }
 
+/** A simulated fleet in a few numbers, so the agent isn't handed hundreds of buoys. */
+function fleetBrief(name: string, ns: NodeInfo[]) {
+  const stat = (k: "water_c" | "air_c" | "pressure_hpa" | "wave_rms_g") => {
+    const v = ns.map((n) => n.latest?.[k]).filter((x): x is number => x != null);
+    if (!v.length) return null;
+    const r = (x: number) => Math.round(x * 1000) / 1000;
+    return { min: r(Math.min(...v)), max: r(Math.max(...v)), mean: r(v.reduce((s, x) => s + x, 0) / v.length) };
+  };
+  return {
+    name,
+    simulated: true,
+    note: "Fake demo data; never a problem to report.",
+    buoys: ns.length,
+    online: ns.filter((n) => n.status === "online").length,
+    names: `${ns[0]?.name} to ${ns[ns.length - 1]?.name}`,
+    water_c: stat("water_c"),
+    air_c: stat("air_c"),
+    pressure_hpa: stat("pressure_hpa"),
+    wave_rms_g: stat("wave_rms_g"),
+  };
+}
+
 async function api(path: string) {
   const r = await fetch(path);
   const j = await r.json();
@@ -133,8 +161,15 @@ async function api(path: string) {
 async function runTool(name: string, a: Record<string, unknown>): Promise<unknown> {
   const st = useStore.getState();
   switch (name) {
-    case "get_fleet_status":
-      return { buoys: Object.values(st.nodes).map(brief), base_receiving: st.collector?.receiving ?? false };
+    case "get_fleet_status": {
+      const all = Object.values(st.nodes);
+      const groups = [...new Set(all.map((n) => n.group).filter((g): g is string => !!g))];
+      return {
+        buoys: all.filter((n) => !n.group).map(brief),
+        simulated_fleets: groups.map((g) => fleetBrief(g, all.filter((n) => n.group === g))),
+        base_receiving: st.collector?.receiving ?? false,
+      };
+    }
     case "get_buoy_details": {
       const n = findBuoy(String(a.buoy));
       if (!n) return { error: `No buoy "${a.buoy}". Known: ${Object.values(st.nodes).map((x) => x.name).join(", ")}` };
@@ -180,10 +215,13 @@ async function runTool(name: string, a: Record<string, unknown>): Promise<unknow
       setTimeout(() => useStore.getState().openNode(n.id), 450);
       return { ok: true, showing: n.name };
     }
-    case "show_map":
+    case "show_map": {
       st.openNode(null);
-      st.focus(null);
-      return { ok: true };
+      const group = a.area === "coast" ? Object.values(st.nodes).find((n) => n.group)?.group ?? undefined : undefined;
+      if (a.area === "coast" && !group) return { error: "No coast fleet is running (start the server with --coast 500)." };
+      setTimeout(() => useStore.getState().focus(null, group), 60); // after the page's own zoom-out
+      return { ok: true, showing: group ?? "buoys here" };
+    }
     case "set_map_color":
       if (!(String(a.metric) in METRICS)) return { error: "unknown metric" };
       st.openNode(null);

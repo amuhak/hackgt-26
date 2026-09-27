@@ -31,10 +31,15 @@ export function connect() {
           useStore.setState({ nodes, collector: m.collector, alerts: m.alerts, readingsTotal: m.readings_total });
           break;
         }
-        case "node": {
-          const prev = useStore.getState().nodes[m.node.id];
-          useStore.setState((s) => ({ nodes: { ...s.nodes, [m.node.id]: m.node } }));
-          if (prev?.latest?.seq !== m.node.latest?.seq) window.dispatchEvent(new CustomEvent("reading", { detail: m.node.id }));
+        case "nodes": {
+          // Every buoy that changed this tick, applied in one update.
+          const prev = useStore.getState().nodes;
+          const next = { ...prev };
+          for (const n of m.nodes as NodeInfo[]) next[n.id] = n;
+          useStore.setState({ nodes: next });
+          for (const n of m.nodes as NodeInfo[]) {
+            if (prev[n.id]?.latest?.seq !== n.latest?.seq) window.dispatchEvent(new CustomEvent("reading", { detail: n.id }));
+          }
           break;
         }
         case "motion":
